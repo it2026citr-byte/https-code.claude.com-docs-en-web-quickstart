@@ -1,0 +1,26 @@
+{
+  "name": "tradingview-mcp",
+  "version": "1.0.0",
+  "description": "MCP server exposing TradingView market data: symbol search, quotes, technical analysis ratings, and market screener",
+  "type": "module",
+  "bin": {
+    "tradingview-mcp": "dist/index.js"
+  },
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "start:http": "node dist/index.js --http"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0"
+  }
+}
