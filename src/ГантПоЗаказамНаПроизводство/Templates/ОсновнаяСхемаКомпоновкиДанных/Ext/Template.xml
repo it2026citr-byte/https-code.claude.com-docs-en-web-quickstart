@@ -1,0 +1,656 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<DataCompositionSchema xmlns="http://v8.1c.ru/8.1/data-composition-system/schema" xmlns:cfg="http://v8.1c.ru/8.1/data/enterprise/current-config" xmlns:dcscor="http://v8.1c.ru/8.1/data-composition-system/core" xmlns:dcsset="http://v8.1c.ru/8.1/data-composition-system/settings" xmlns:v8="http://v8.1c.ru/8.1/data/core" xmlns:v8ui="http://v8.1c.ru/8.1/data/ui" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<dataSource>
+		<name>ИсточникДанных1</name>
+		<dataSourceType>Local</dataSourceType>
+	</dataSource>
+	<dataSet xsi:type="DataSetQuery">
+		<name>ЗаказыНаПроизводство</name>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>Заказ</dataPath>
+			<field>Заказ</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Заказ на производство</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>Номер</dataPath>
+			<field>Номер</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Номер</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ДатаДокумента</dataPath>
+			<field>ДатаДокумента</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Дата документа</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>Статус</dataPath>
+			<field>Статус</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Статус</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>Подразделение</dataPath>
+			<field>Подразделение</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Подразделение</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ДокументОснование</dataPath>
+			<field>ДокументОснование</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Документ-основание</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ВидИнтервала</dataPath>
+			<field>ВидИнтервала</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Вид интервала</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ПорядокВида</dataPath>
+			<field>ПорядокВида</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Порядок вида</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ДатаНачала</dataPath>
+			<field>ДатаНачала</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Дата начала</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ДатаОкончания</dataPath>
+			<field>ДатаОкончания</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Дата окончания</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>КоличествоДнейПлан</dataPath>
+			<field>КоличествоДнейПлан</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Количество дней (план)</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>КоличествоЭтапов</dataPath>
+			<field>КоличествоЭтапов</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Этапов всего</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ЗавершеноЭтапов</dataPath>
+			<field>ЗавершеноЭтапов</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Этапов завершено</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ДатаЗавершенияЗаказа</dataPath>
+			<field>ДатаЗавершенияЗаказа</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Дата завершения по заказу</v8:content></v8:item></title>
+		</field>
+		<field xsi:type="DataSetFieldField">
+			<dataPath>ЭтоФакт</dataPath>
+			<field>ЭтоФакт</field>
+			<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Это факт</v8:content></v8:item></title>
+		</field>
+		<dataSource>ИсточникДанных1</dataSource>
+		<query>////////////////////////////////////////////////////////////////////////////////
+// Отчёт &quot;Гант по заказам на производство&quot; (план/факт производства)
+// Конфигурация: 1С:ERP Управление предприятием 2.5
+//
+// Логика (согласовано с постановщиком):
+//   ПЛАН  — начало = дата начала заказа на производство,
+//           окончание = начало + &quot;Количество дней&quot; (доп. реквизит документа-основания:
+//           заказ клиента / заказ давальца).
+//   ФАКТ  — только для заказов в статусе &quot;К производству&quot;, по этапам производства:
+//           min(факт начала, иначе план начала) ... max(факт завершения, иначе план завершения).
+//
+// Параметры:
+//   &amp;СвойствоКоличествоДней — ПланВидовХарактеристик.ДополнительныеРеквизитыИСведения
+//                             (доп. реквизит &quot;Количество дней&quot;)
+//   &amp;НачалоПериода, &amp;КонецПериода — отбор по дате начала ЗНП; пустая дата = без ограничения
+//   &amp;Статусы — массив статусов ЗНП (по умолчанию: Формируется, КПроизводству)
+//
+// ТОЧКИ АДАПТАЦИИ помечены комментарием [ПРОВЕРИТЬ] — см. docs/01-Анализ-ТЗ.md
+////////////////////////////////////////////////////////////////////////////////
+
+////////////////////////////////////////////////////////////////////////////////
+// 1. Заказы на производство + документы-основания
+//    [ПРОВЕРИТЬ] Документ.ЗаказНаПроизводство2_5: реквизиты ДатаНачала / ДатаЗавершения
+//    [ПРОВЕРИТЬ] ТЧ Продукция: реквизит Заказ (ссылка на заказ клиента / давальца)
+////////////////////////////////////////////////////////////////////////////////
+ВЫБРАТЬ РАЗЛИЧНЫЕ
+	ЗНП.Ссылка КАК Заказ,
+	ЗНП.Номер КАК Номер,
+	ЗНП.Дата КАК ДатаДокумента,
+	ЗНП.Статус КАК Статус,
+	ЗНП.Подразделение КАК Подразделение,
+	ЗНП.ДатаНачала КАК ДатаНачалаЗаказа,
+	ЗНП.ДатаЗавершения КАК ДатаЗавершенияЗаказа,
+	Продукция.Заказ КАК ДокументОснование,
+	ПРЕДСТАВЛЕНИЕ(Продукция.Заказ) КАК ДокументОснованиеПредставление
+ПОМЕСТИТЬ ВТ_ЗаказыОснования
+ИЗ
+	Документ.ЗаказНаПроизводство2_5 КАК ЗНП
+		ЛЕВОЕ СОЕДИНЕНИЕ Документ.ЗаказНаПроизводство2_5.Продукция КАК Продукция
+		ПО Продукция.Ссылка = ЗНП.Ссылка
+ГДЕ
+	НЕ ЗНП.ПометкаУдаления
+	И ЗНП.Статус В (&amp;Статусы)
+	И (&amp;НачалоПериода = ДАТАВРЕМЯ(1, 1, 1) ИЛИ ЗНП.ДатаНачала &gt;= &amp;НачалоПериода)
+	И (&amp;КонецПериода = ДАТАВРЕМЯ(1, 1, 1) ИЛИ ЗНП.ДатаНачала &lt;= &amp;КонецПериода)
+
+ИНДЕКСИРОВАТЬ ПО
+	Заказ,
+	ДокументОснование
+;
+
+////////////////////////////////////////////////////////////////////////////////
+// 2. Шапка заказа (одна строка на заказ)
+////////////////////////////////////////////////////////////////////////////////
+ВЫБРАТЬ
+	ЗО.Заказ КАК Заказ,
+	ЗО.Номер КАК Номер,
+	ЗО.ДатаДокумента КАК ДатаДокумента,
+	ЗО.Статус КАК Статус,
+	ЗО.Подразделение КАК Подразделение,
+	ЗО.ДатаНачалаЗаказа КАК ДатаНачалаЗаказа,
+	ЗО.ДатаЗавершенияЗаказа КАК ДатаЗавершенияЗаказа,
+	МАКСИМУМ(ЗО.ДокументОснованиеПредставление) КАК ДокументОснованиеПредставление,
+	КОЛИЧЕСТВО(РАЗЛИЧНЫЕ ЗО.ДокументОснование) КАК КоличествоОснований
+ПОМЕСТИТЬ ВТ_ЗаказыШапка
+ИЗ
+	ВТ_ЗаказыОснования КАК ЗО
+
+СГРУППИРОВАТЬ ПО
+	ЗО.Заказ,
+	ЗО.Номер,
+	ЗО.ДатаДокумента,
+	ЗО.Статус,
+	ЗО.Подразделение,
+	ЗО.ДатаНачалаЗаказа,
+	ЗО.ДатаЗавершенияЗаказа
+
+ИНДЕКСИРОВАТЬ ПО
+	Заказ
+;
+
+////////////////////////////////////////////////////////////////////////////////
+// 3. &quot;Количество дней&quot; из документа-основания.
+//    Ищем и в табличной части ДополнительныеРеквизиты, и в регистре
+//    ДополнительныеСведения — какой бы вариант хранения ни был настроен.
+////////////////////////////////////////////////////////////////////////////////
+ВЫБРАТЬ
+	ЗО.Заказ КАК Заказ,
+	ВЫРАЗИТЬ(ДопРеквКлиента.Значение КАК ЧИСЛО(10, 2)) КАК КоличествоДней
+ПОМЕСТИТЬ ВТ_ДниВсеИсточники
+ИЗ
+	ВТ_ЗаказыОснования КАК ЗО
+		ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.ЗаказКлиента.ДополнительныеРеквизиты КАК ДопРеквКлиента
+		ПО ДопРеквКлиента.Ссылка = ЗО.ДокументОснование
+			И ДопРеквКлиента.Свойство = &amp;СвойствоКоличествоДней
+
+ОБЪЕДИНИТЬ ВСЕ
+
+ВЫБРАТЬ
+	ЗО.Заказ,
+	ВЫРАЗИТЬ(ДопРеквДавальца.Значение КАК ЧИСЛО(10, 2))
+ИЗ
+	ВТ_ЗаказыОснования КАК ЗО
+		ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.ЗаказДавальца.ДополнительныеРеквизиты КАК ДопРеквДавальца
+		ПО ДопРеквДавальца.Ссылка = ЗО.ДокументОснование
+			И ДопРеквДавальца.Свойство = &amp;СвойствоКоличествоДней
+
+ОБЪЕДИНИТЬ ВСЕ
+
+ВЫБРАТЬ
+	ЗО.Заказ,
+	ВЫРАЗИТЬ(ДопСведения.Значение КАК ЧИСЛО(10, 2))
+ИЗ
+	ВТ_ЗаказыОснования КАК ЗО
+		ВНУТРЕННЕЕ СОЕДИНЕНИЕ РегистрСведений.ДополнительныеСведения КАК ДопСведения
+		ПО ДопСведения.Объект = ЗО.ДокументОснование
+			И ДопСведения.Свойство = &amp;СвойствоКоличествоДней
+;
+
+ВЫБРАТЬ
+	ДВ.Заказ КАК Заказ,
+	МАКСИМУМ(ДВ.КоличествоДней) КАК КоличествоДней
+ПОМЕСТИТЬ ВТ_Дни
+ИЗ
+	ВТ_ДниВсеИсточники КАК ДВ
+ГДЕ
+	ДВ.КоличествоДней ЕСТЬ НЕ NULL
+
+СГРУППИРОВАТЬ ПО
+	ДВ.Заказ
+
+ИНДЕКСИРОВАТЬ ПО
+	Заказ
+;
+
+////////////////////////////////////////////////////////////////////////////////
+// 4. Факт по этапам производства.
+//    [ПРОВЕРИТЬ] Документ.ЭтапПроизводства2_5: реквизиты ЗаказНаПроизводство,
+//    ДатаНачала / ДатаЗавершения (план по графику),
+//    ДатаНачалаФакт / ДатаЗавершенияФакт (факт).
+//    Правило: берём факт, если он заполнен, иначе плановую дату этапа.
+////////////////////////////////////////////////////////////////////////////////
+ВЫБРАТЬ
+	Этапы.ЗаказНаПроизводство КАК Заказ,
+	МИНИМУМ(ВЫБОР
+			КОГДА Этапы.ДатаНачалаФакт = ДАТАВРЕМЯ(1, 1, 1)
+				ТОГДА Этапы.ДатаНачала
+			ИНАЧЕ Этапы.ДатаНачалаФакт
+		КОНЕЦ) КАК ДатаНачалаФакт,
+	МАКСИМУМ(ВЫБОР
+			КОГДА Этапы.ДатаЗавершенияФакт = ДАТАВРЕМЯ(1, 1, 1)
+				ТОГДА Этапы.ДатаЗавершения
+			ИНАЧЕ Этапы.ДатаЗавершенияФакт
+		КОНЕЦ) КАК ДатаЗавершенияФакт,
+	КОЛИЧЕСТВО(РАЗЛИЧНЫЕ Этапы.Ссылка) КАК КоличествоЭтапов,
+	СУММА(ВЫБОР
+			КОГДА Этапы.ДатаЗавершенияФакт = ДАТАВРЕМЯ(1, 1, 1)
+				ТОГДА 0
+			ИНАЧЕ 1
+		КОНЕЦ) КАК ЗавершеноЭтапов
+ПОМЕСТИТЬ ВТ_Факт
+ИЗ
+	Документ.ЭтапПроизводства2_5 КАК Этапы
+ГДЕ
+	НЕ Этапы.ПометкаУдаления
+	И Этапы.ЗаказНаПроизводство В
+			(ВЫБРАТЬ
+				ЗШ.Заказ
+			ИЗ
+				ВТ_ЗаказыШапка КАК ЗШ)
+
+СГРУППИРОВАТЬ ПО
+	Этапы.ЗаказНаПроизводство
+
+ИНДЕКСИРОВАТЬ ПО
+	Заказ
+;
+
+////////////////////////////////////////////////////////////////////////////////
+// 5. Результат: по две строки на заказ — &quot;План&quot; и &quot;Факт&quot;.
+//    Строка &quot;Факт&quot; выводится только там, где этапы уже сформированы.
+////////////////////////////////////////////////////////////////////////////////
+ВЫБРАТЬ
+	ЗШ.Заказ КАК Заказ,
+	ЗШ.Номер КАК Номер,
+	ЗШ.ДатаДокумента КАК ДатаДокумента,
+	ЗШ.Статус КАК Статус,
+	ЗШ.Подразделение КАК Подразделение,
+	ЗШ.ДокументОснованиеПредставление КАК ДокументОснование,
+	ВЫРАЗИТЬ(&quot;План&quot; КАК СТРОКА(10)) КАК ВидИнтервала,
+	1 КАК ПорядокВида,
+	ЗШ.ДатаНачалаЗаказа КАК ДатаНачала,
+	ВЫБОР
+		КОГДА ЕСТЬNULL(Д.КоличествоДней, 0) &gt; 0
+			ТОГДА ДОБАВИТЬКДАТЕ(ЗШ.ДатаНачалаЗаказа, ДЕНЬ, ВЫРАЗИТЬ(Д.КоличествоДней КАК ЧИСЛО(10, 0)))
+		КОГДА ЗШ.ДатаЗавершенияЗаказа &gt; ЗШ.ДатаНачалаЗаказа
+			ТОГДА ЗШ.ДатаЗавершенияЗаказа
+		ИНАЧЕ ДОБАВИТЬКДАТЕ(ЗШ.ДатаНачалаЗаказа, ДЕНЬ, 1)
+	КОНЕЦ КАК ДатаОкончания,
+	ЕСТЬNULL(Д.КоличествоДней, 0) КАК КоличествоДнейПлан,
+	ЕСТЬNULL(Ф.КоличествоЭтапов, 0) КАК КоличествоЭтапов,
+	ЕСТЬNULL(Ф.ЗавершеноЭтапов, 0) КАК ЗавершеноЭтапов,
+	ЗШ.ДатаЗавершенияЗаказа КАК ДатаЗавершенияЗаказа,
+	ЛОЖЬ КАК ЭтоФакт
+ИЗ
+	ВТ_ЗаказыШапка КАК ЗШ
+		ЛЕВОЕ СОЕДИНЕНИЕ ВТ_Дни КАК Д
+		ПО Д.Заказ = ЗШ.Заказ
+		ЛЕВОЕ СОЕДИНЕНИЕ ВТ_Факт КАК Ф
+		ПО Ф.Заказ = ЗШ.Заказ
+ГДЕ
+	ЗШ.ДатаНачалаЗаказа &lt;&gt; ДАТАВРЕМЯ(1, 1, 1)
+
+ОБЪЕДИНИТЬ ВСЕ
+
+ВЫБРАТЬ
+	ЗШ.Заказ,
+	ЗШ.Номер,
+	ЗШ.ДатаДокумента,
+	ЗШ.Статус,
+	ЗШ.Подразделение,
+	ЗШ.ДокументОснованиеПредставление,
+	ВЫРАЗИТЬ(&quot;Факт&quot; КАК СТРОКА(10)),
+	2,
+	Ф.ДатаНачалаФакт,
+	ВЫБОР
+		КОГДА Ф.ДатаЗавершенияФакт &gt; Ф.ДатаНачалаФакт
+			ТОГДА Ф.ДатаЗавершенияФакт
+		ИНАЧЕ ДОБАВИТЬКДАТЕ(Ф.ДатаНачалаФакт, ДЕНЬ, 1)
+	КОНЕЦ,
+	ЕСТЬNULL(Д.КоличествоДней, 0),
+	Ф.КоличествоЭтапов,
+	Ф.ЗавершеноЭтапов,
+	ЗШ.ДатаЗавершенияЗаказа,
+	ИСТИНА
+ИЗ
+	ВТ_ЗаказыШапка КАК ЗШ
+		ВНУТРЕННЕЕ СОЕДИНЕНИЕ ВТ_Факт КАК Ф
+		ПО Ф.Заказ = ЗШ.Заказ
+		ЛЕВОЕ СОЕДИНЕНИЕ ВТ_Дни КАК Д
+		ПО Д.Заказ = ЗШ.Заказ
+ГДЕ
+	Ф.ДатаНачалаФакт &lt;&gt; ДАТАВРЕМЯ(1, 1, 1)
+
+УПОРЯДОЧИТЬ ПО
+	Статус,
+	ДатаНачала,
+	Номер,
+	ПорядокВида
+</query>
+	</dataSet>
+	<calculatedField>
+		<dataPath>ДлительностьДней</dataPath>
+		<expression>РазностьДат(ДатаНачала, ДатаОкончания, &quot;ДЕНЬ&quot;)</expression>
+		<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Длительность, дней</v8:content></v8:item></title>
+	</calculatedField>
+	<totalField>
+		<dataPath>ДатаНачала</dataPath>
+		<expression>Минимум(ДатаНачала)</expression>
+	</totalField>
+	<totalField>
+		<dataPath>ДатаОкончания</dataPath>
+		<expression>Максимум(ДатаОкончания)</expression>
+	</totalField>
+	<totalField>
+		<dataPath>ДлительностьДней</dataPath>
+		<expression>Максимум(ДлительностьДней)</expression>
+	</totalField>
+	<totalField>
+		<dataPath>КоличествоДнейПлан</dataPath>
+		<expression>Максимум(КоличествоДнейПлан)</expression>
+	</totalField>
+	<totalField>
+		<dataPath>КоличествоЭтапов</dataPath>
+		<expression>Максимум(КоличествоЭтапов)</expression>
+	</totalField>
+	<totalField>
+		<dataPath>ЗавершеноЭтапов</dataPath>
+		<expression>Максимум(ЗавершеноЭтапов)</expression>
+	</totalField>
+	<parameter>
+		<name>СвойствоКоличествоДней</name>
+		<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Доп. реквизит &quot;Количество дней&quot;</v8:content></v8:item></title>
+		<valueType>
+			<v8:Type>cfg:ПланВидовХарактеристикСсылка.ДополнительныеРеквизитыИСведения</v8:Type>
+		</valueType>
+		<use>Always</use>
+	</parameter>
+	<parameter>
+		<name>НачалоПериода</name>
+		<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Начало периода</v8:content></v8:item></title>
+		<valueType>
+			<v8:Type>xs:dateTime</v8:Type>
+			<v8:DateQualifiers>
+				<v8:DateFractions>Date</v8:DateFractions>
+			</v8:DateQualifiers>
+		</valueType>
+		<value xsi:type="xs:dateTime">0001-01-01T00:00:00</value>
+		<use>Always</use>
+	</parameter>
+	<parameter>
+		<name>КонецПериода</name>
+		<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Конец периода</v8:content></v8:item></title>
+		<valueType>
+			<v8:Type>xs:dateTime</v8:Type>
+			<v8:DateQualifiers>
+				<v8:DateFractions>Date</v8:DateFractions>
+			</v8:DateQualifiers>
+		</valueType>
+		<value xsi:type="xs:dateTime">0001-01-01T00:00:00</value>
+		<use>Always</use>
+	</parameter>
+	<parameter>
+		<name>Статусы</name>
+		<title xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Статусы заказов</v8:content></v8:item></title>
+		<valueType>
+			<v8:Type>cfg:ПеречислениеСсылка.СтатусыЗаказовНаПроизводство2_5</v8:Type>
+		</valueType>
+		<value xsi:type="v8:ValueListType">
+			<v8:item>
+				<v8:value xsi:type="cfg:ПеречислениеСсылка.СтатусыЗаказовНаПроизводство2_5">Формируется</v8:value>
+			</v8:item>
+			<v8:item>
+				<v8:value xsi:type="cfg:ПеречислениеСсылка.СтатусыЗаказовНаПроизводство2_5">КПроизводству</v8:value>
+			</v8:item>
+		</value>
+		<use>Always</use>
+		<valueListAllowed>true</valueListAllowed>
+	</parameter>
+	<settingsVariant>
+		<dcsset:name>ПланФакт</dcsset:name>
+		<dcsset:presentation xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>План / факт производства</v8:content></v8:item></dcsset:presentation>
+		<dcsset:settings xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+			<dcsset:selection>
+				<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+			</dcsset:selection>
+			<dcsset:item xsi:type="dcsset:StructureItemChart">
+				<dcsset:outputParameters>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>ТипДиаграммы</dcsset:parameter>
+						<dcsset:value xsi:type="v8ui:ChartType">GanttChart</dcsset:value>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>Заголовок</dcsset:parameter>
+						<dcsset:value xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Заказы на производство в статусе «Формируется» (план)</v8:content></v8:item></dcsset:value>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>РасположениеЛегенды</dcsset:parameter>
+						<dcsset:value xsi:type="v8ui:ChartLegendPlacement">Bottom</dcsset:value>
+					</dcsset:item>
+				</dcsset:outputParameters>
+				<dcsset:filter>
+					<dcsset:item xsi:type="dcsset:FilterItemComparison">
+						<dcsset:use>true</dcsset:use>
+						<dcsset:left xsi:type="dcscor:Field">Статус</dcsset:left>
+						<dcsset:comparisonType>Equal</dcsset:comparisonType>
+						<dcsset:right xsi:type="cfg:ПеречислениеСсылка.СтатусыЗаказовНаПроизводство2_5">Формируется</dcsset:right>
+					</dcsset:item>
+				</dcsset:filter>
+				<dcsset:point>
+				<dcsset:item xsi:type="dcsset:StructureItemGroup">
+					<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>Заказ</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+					</dcsset:groupItems>
+					<dcsset:order>
+						<dcsset:item xsi:type="dcsset:OrderItemField">
+							<dcsset:field>ДатаНачала</dcsset:field>
+							<dcsset:orderType>Asc</dcsset:orderType>
+						</dcsset:item>
+					</dcsset:order>
+					<dcsset:selection>
+						<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+					</dcsset:selection>
+				</dcsset:item>
+				</dcsset:point>
+				<dcsset:series>
+				<dcsset:item xsi:type="dcsset:StructureItemGroup">
+					<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>ВидИнтервала</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+					</dcsset:groupItems>
+					<dcsset:filter>
+						<dcsset:item xsi:type="dcsset:FilterItemComparison">
+							<dcsset:use>true</dcsset:use>
+							<dcsset:left xsi:type="dcscor:Field">ЭтоФакт</dcsset:left>
+							<dcsset:comparisonType>Equal</dcsset:comparisonType>
+							<dcsset:right xsi:type="xs:boolean">false</dcsset:right>
+						</dcsset:item>
+					</dcsset:filter>
+					<dcsset:order>
+						<dcsset:item xsi:type="dcsset:OrderItemField">
+							<dcsset:field>ПорядокВида</dcsset:field>
+							<dcsset:orderType>Asc</dcsset:orderType>
+						</dcsset:item>
+					</dcsset:order>
+					<dcsset:selection>
+						<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+					</dcsset:selection>
+				</dcsset:item>
+				</dcsset:series>
+				<dcsset:selection>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДатаНачала</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДатаОкончания</dcsset:field>
+					</dcsset:item>
+				</dcsset:selection>
+			</dcsset:item>
+			<dcsset:item xsi:type="dcsset:StructureItemChart">
+				<dcsset:outputParameters>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>ТипДиаграммы</dcsset:parameter>
+						<dcsset:value xsi:type="v8ui:ChartType">GanttChart</dcsset:value>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>Заголовок</dcsset:parameter>
+						<dcsset:value xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Заказы на производство в статусе «К производству» (план / факт)</v8:content></v8:item></dcsset:value>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>РасположениеЛегенды</dcsset:parameter>
+						<dcsset:value xsi:type="v8ui:ChartLegendPlacement">Bottom</dcsset:value>
+					</dcsset:item>
+				</dcsset:outputParameters>
+				<dcsset:filter>
+					<dcsset:item xsi:type="dcsset:FilterItemComparison">
+						<dcsset:use>true</dcsset:use>
+						<dcsset:left xsi:type="dcscor:Field">Статус</dcsset:left>
+						<dcsset:comparisonType>Equal</dcsset:comparisonType>
+						<dcsset:right xsi:type="cfg:ПеречислениеСсылка.СтатусыЗаказовНаПроизводство2_5">КПроизводству</dcsset:right>
+					</dcsset:item>
+				</dcsset:filter>
+				<dcsset:point>
+				<dcsset:item xsi:type="dcsset:StructureItemGroup">
+					<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>Заказ</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+					</dcsset:groupItems>
+					<dcsset:order>
+						<dcsset:item xsi:type="dcsset:OrderItemField">
+							<dcsset:field>ДатаНачала</dcsset:field>
+							<dcsset:orderType>Asc</dcsset:orderType>
+						</dcsset:item>
+					</dcsset:order>
+					<dcsset:selection>
+						<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+					</dcsset:selection>
+				</dcsset:item>
+				</dcsset:point>
+				<dcsset:series>
+				<dcsset:item xsi:type="dcsset:StructureItemGroup">
+					<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>ВидИнтервала</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+					</dcsset:groupItems>
+					<dcsset:order>
+						<dcsset:item xsi:type="dcsset:OrderItemField">
+							<dcsset:field>ПорядокВида</dcsset:field>
+							<dcsset:orderType>Asc</dcsset:orderType>
+						</dcsset:item>
+					</dcsset:order>
+					<dcsset:selection>
+						<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+					</dcsset:selection>
+				</dcsset:item>
+				</dcsset:series>
+				<dcsset:selection>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДатаНачала</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДатаОкончания</dcsset:field>
+					</dcsset:item>
+				</dcsset:selection>
+			</dcsset:item>
+			<dcsset:item xsi:type="dcsset:StructureItemTable">
+				<dcsset:outputParameters>
+					<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+						<dcsset:parameter>Заголовок</dcsset:parameter>
+						<dcsset:value xsi:type="v8:LocalStringType"><v8:item><v8:lang>ru</v8:lang><v8:content>Расшифровка план/факт</v8:content></v8:item></dcsset:value>
+					</dcsset:item>
+				</dcsset:outputParameters>
+				<dcsset:row>
+				<dcsset:item xsi:type="dcsset:StructureItemGroup">
+					<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>Статус</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+					</dcsset:groupItems>
+					<dcsset:selection>
+						<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+					</dcsset:selection>
+					<dcsset:item xsi:type="dcsset:StructureItemGroup">
+						<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>Заказ</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+						</dcsset:groupItems>
+						<dcsset:selection>
+							<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+						</dcsset:selection>
+					</dcsset:item>
+				</dcsset:item>
+				</dcsset:row>
+				<dcsset:column>
+				<dcsset:item xsi:type="dcsset:StructureItemGroup">
+					<dcsset:groupItems>
+					<dcsset:item xsi:type="dcsset:GroupItemField">
+						<dcsset:field>ВидИнтервала</dcsset:field>
+						<dcsset:groupType>Items</dcsset:groupType>
+						<dcsset:periodAdditionType>None</dcsset:periodAdditionType>
+						<dcsset:periodAdditionPeriod xsi:type="xs:dateTime">0001-01-01T00:00:00</dcsset:periodAdditionPeriod>
+					</dcsset:item>
+					</dcsset:groupItems>
+					<dcsset:selection>
+						<dcsset:item xsi:type="dcsset:SelectedItemAuto"/>
+					</dcsset:selection>
+				</dcsset:item>
+				</dcsset:column>
+				<dcsset:selection>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДатаНачала</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДатаОкончания</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ДлительностьДней</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>КоличествоДнейПлан</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>КоличествоЭтапов</dcsset:field>
+					</dcsset:item>
+					<dcsset:item xsi:type="dcsset:SelectedItemField">
+						<dcsset:field>ЗавершеноЭтапов</dcsset:field>
+					</dcsset:item>
+				</dcsset:selection>
+			</dcsset:item>
+			<dcsset:outputParameters>
+				<dcsset:item xsi:type="dcsset:SettingsParameterValue">
+					<dcsset:parameter>ВыводитьПараметрыДанных</dcsset:parameter>
+					<dcsset:value xsi:type="dcscor:DataCompositionTextOutputType">Auto</dcsset:value>
+				</dcsset:item>
+			</dcsset:outputParameters>
+		</dcsset:settings>
+	</settingsVariant>
+</DataCompositionSchema>
