@@ -1,0 +1,74 @@
+//@version=6
+// Универсальная стратегия: UT Bot Alerts (QuantNomad) — входы, CCI (Дональд Ламберт) — фильтр.
+// UT Bot даёт сигнал по пересечению ценой ATR-трейлинг-стопа; CCI отсекает сигналы против импульса.
+strategy("UT Bot + CCI Strategy", overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.percent_of_equity, default_qty_value = 100,
+     commission_type = strategy.commission.percent, commission_value = 0.05)
+
+// ───────── UT Bot ─────────
+utKey       = input.float(1.0,  "Key Value (чувствительность)", minval = 0.1, step = 0.1, group = "UT Bot")
+utAtrPeriod = input.int(10,     "ATR Period",                   minval = 1,               group = "UT Bot")
+useHeikin   = input.bool(false, "Сигналы по Heikin Ashi",                                 group = "UT Bot")
+
+src   = useHeikin ? request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, lookahead = barmerge.lookahead_off) : close
+atrVal = ta.atr(utAtrPeriod)
+nLoss  = utKey * atrVal
+
+var float utStop = na
+utStop := src > nz(utStop[1]) and src[1] > nz(utStop[1]) ? math.max(nz(utStop[1]), src - nLoss) :
+     src < nz(utStop[1]) and src[1] < nz(utStop[1]) ? math.min(nz(utStop[1]), src + nLoss) :
+     src > nz(utStop[1]) ? src - nLoss : src + nLoss
+
+ema1   = ta.ema(src, 1)
+utBuy  = src > utStop and ta.crossover(ema1, utStop)
+utSell = src < utStop and ta.crossunder(ema1, utStop)
+
+// ───────── CCI-фильтр ─────────
+useCci  = input.bool(true, "Включить CCI-фильтр", group = "CCI")
+cciLen  = input.int(20,    "CCI Length",          group = "CCI")
+cciMode = input.string("Тренд (CCI > 0)", "Режим фильтра",
+     options = ["Тренд (CCI > 0)", "Зоны ±100 (не входить в перекупленность)"], group = "CCI")
+
+cci = ta.cci(hlc3, cciLen)
+longOk  = not useCci or (cciMode == "Тренд (CCI > 0)" ? cci > 0 : cci < 100)
+shortOk = not useCci or (cciMode == "Тренд (CCI > 0)" ? cci < 0 : cci > -100)
+
+// ───────── Управление позицией ─────────
+enableLong  = input.bool(true,  "Лонги",  group = "Позиции")
+enableShort = input.bool(true,  "Шорты",  group = "Позиции")
+useSlTp     = input.bool(false, "ATR стоп-лосс / тейк-профит", group = "Позиции")
+slMult      = input.float(2.0,  "Стоп-лосс, ATR ×",  minval = 0.1, step = 0.1, group = "Позиции")
+tpMult      = input.float(3.0,  "Тейк-профит, ATR ×", minval = 0.1, step = 0.1, group = "Позиции")
+
+longSignal  = utBuy  and longOk
+shortSignal = utSell and shortOk
+
+var float entryAtr = na
+if longSignal and enableLong
+    entryAtr := atrVal
+    strategy.entry("Long", strategy.long)
+if shortSignal and enableShort
+    entryAtr := atrVal
+    strategy.entry("Short", strategy.short)
+
+// Противоположный сигнал UT Bot всегда закрывает позицию (даже если фильтр не пустил новый вход)
+if utSell and strategy.position_size > 0
+    strategy.close("Long", comment = "UT exit")
+if utBuy and strategy.position_size < 0
+    strategy.close("Short", comment = "UT exit")
+
+if useSlTp and strategy.position_size > 0
+    strategy.exit("XL", "Long",  stop = strategy.position_avg_price - slMult * entryAtr, limit = strategy.position_avg_price + tpMult * entryAtr)
+if useSlTp and strategy.position_size < 0
+    strategy.exit("XS", "Short", stop = strategy.position_avg_price + slMult * entryAtr, limit = strategy.position_avg_price - tpMult * entryAtr)
+
+// ───────── Визуализация и алерты ─────────
+plot(utStop, "ATR Trailing Stop", color = src > utStop ? color.green : color.red, linewidth = 2)
+plotshape(longSignal,  "Buy",  style = shape.labelup,   location = location.belowbar, color = color.green, text = "Buy",  textcolor = color.white, size = size.tiny)
+plotshape(shortSignal, "Sell", style = shape.labeldown, location = location.abovebar, color = color.red,   text = "Sell", textcolor = color.white, size = size.tiny)
+plotshape(utBuy and not longOk,   "Buy отфильтрован CCI",  style = shape.xcross, location = location.belowbar, color = color.gray, size = size.tiny)
+plotshape(utSell and not shortOk, "Sell отфильтрован CCI", style = shape.xcross, location = location.abovebar, color = color.gray, size = size.tiny)
+
+alertcondition(longSignal,  "UT+CCI Long",  "UT Bot + CCI: сигнал LONG")
+alertcondition(shortSignal, "UT+CCI Short", "UT Bot + CCI: сигнал SHORT")
