@@ -10,6 +10,7 @@ strategy("UT Bot + CCI Strategy", overlay = true,
 utKey       = input.float(1.0,  "Key Value (чувствительность)", minval = 0.1, step = 0.1, group = "UT Bot")
 utAtrPeriod = input.int(10,     "ATR Period",                   minval = 1,               group = "UT Bot")
 useHeikin   = input.bool(false, "Сигналы по Heikin Ashi",                                 group = "UT Bot")
+paintBars   = input.bool(false, "Красить бары по позиции UT Bot",                         group = "UT Bot")
 
 src   = useHeikin ? request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, lookahead = barmerge.lookahead_off) : close
 atrVal = ta.atr(utAtrPeriod)
@@ -69,6 +70,8 @@ plotshape(longSignal,  "Buy",  style = shape.labelup,   location = location.belo
 plotshape(shortSignal, "Sell", style = shape.labeldown, location = location.abovebar, color = color.red,   text = "Sell", textcolor = color.white, size = size.tiny)
 plotshape(utBuy and not longOk,   "Buy отфильтрован CCI",  style = shape.xcross, location = location.belowbar, color = color.gray, size = size.tiny)
 plotshape(utSell and not shortOk, "Sell отфильтрован CCI", style = shape.xcross, location = location.abovebar, color = color.gray, size = size.tiny)
+
+barcolor(paintBars ? (src > utStop ? color.green : color.red) : na)
 
 alertcondition(longSignal,  "UT+CCI Long",  "UT Bot + CCI: сигнал LONG")
 alertcondition(shortSignal, "UT+CCI Short", "UT Bot + CCI: сигнал SHORT")
