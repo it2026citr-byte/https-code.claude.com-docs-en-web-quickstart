@@ -1,9 +1,10 @@
 //@version=6
-// Универсальная стратегия из трёх компонентов:
+// Универсальная стратегия из четырёх компонентов:
 //   1. UT Bot Alerts (QuantNomad)        — генератор входов по ATR-трейлинг-стопу
 //   2. CCI (Дональд Ламберт)             — фильтр импульса
 //   3. Squeeze Momentum [LazyBear]       — фильтр волатильности и направления momentum
-strategy("UT Bot + CCI + SQZMOM Strategy", overlay = true,
+//   4. Smart Money Concepts (структура)  — фильтр по BOS/CHoCH: торговля только по структуре рынка
+strategy("Universal Strategy: UT Bot + CCI + SQZMOM + SMC", overlay = true,
      initial_capital = 10000,
      default_qty_type = strategy.percent_of_equity, default_qty_value = 100,
      commission_type = strategy.commission.percent, commission_value = 0.05)
@@ -64,6 +65,43 @@ sqzVal = ta.linreg(close - math.avg(math.avg(ta.highest(high, kcLen), ta.lowest(
 sqzLongOk  = (not useSqzDir or sqzVal > 0) and (not useSqzWait or not sqzOn)
 sqzShortOk = (not useSqzDir or sqzVal < 0) and (not useSqzWait or not sqzOn)
 
+// ───────── Smart Money Concepts: структура рынка (BOS / CHoCH) ─────────
+// Свинги по pivot-точкам; пробой последнего свинг-хая закрытием = бычий слом,
+// свинг-лоя = медвежий. BOS — слом по тренду, CHoCH — против (смена характера).
+useSmc     = input.bool(true, "Включить SMC-фильтр (структура рынка)", group = "Smart Money Concepts")
+smcLen     = input.int(10,    "Период свингов (pivot)", minval = 2,    group = "Smart Money Concepts")
+showStruct = input.bool(true, "Показывать метки BOS/CHoCH",            group = "Smart Money Concepts")
+
+ph = ta.pivothigh(high, smcLen, smcLen)
+pl = ta.pivotlow(low, smcLen, smcLen)
+
+var float lastSwingHigh = na
+var float lastSwingLow  = na
+var int   structDir     = 0   // 1 — бычья структура, -1 — медвежья, 0 — не определена
+if not na(ph)
+    lastSwingHigh := ph
+if not na(pl)
+    lastSwingLow := pl
+
+breakUp = not na(lastSwingHigh) and close > lastSwingHigh
+breakDn = not na(lastSwingLow)  and close < lastSwingLow
+
+if breakUp
+    if showStruct
+        label.new(bar_index, lastSwingHigh, structDir == -1 ? "CHoCH" : "BOS",
+             style = label.style_label_down, color = color.new(color.teal, 20), textcolor = color.white, size = size.small)
+    structDir := 1
+    lastSwingHigh := na
+if breakDn
+    if showStruct
+        label.new(bar_index, lastSwingLow, structDir == 1 ? "CHoCH" : "BOS",
+             style = label.style_label_up, color = color.new(color.maroon, 20), textcolor = color.white, size = size.small)
+    structDir := -1
+    lastSwingLow := na
+
+smcLongOk  = not useSmc or structDir >= 0
+smcShortOk = not useSmc or structDir <= 0
+
 // ───────── Управление позицией ─────────
 enableLong  = input.bool(true,  "Лонги",  group = "Позиции")
 enableShort = input.bool(true,  "Шорты",  group = "Позиции")
@@ -71,8 +109,8 @@ useSlTp     = input.bool(false, "ATR стоп-лосс / тейк-профит",
 slMult      = input.float(2.0,  "Стоп-лосс, ATR ×",  minval = 0.1, step = 0.1, group = "Позиции")
 tpMult      = input.float(3.0,  "Тейк-профит, ATR ×", minval = 0.1, step = 0.1, group = "Позиции")
 
-longOk  = cciLongOk and sqzLongOk
-shortOk = cciShortOk and sqzShortOk
+longOk  = cciLongOk and sqzLongOk and smcLongOk
+shortOk = cciShortOk and sqzShortOk and smcShortOk
 
 longSignal  = utBuy  and longOk
 shortSignal = utSell and shortOk
@@ -106,5 +144,5 @@ plotshape(utSell and not shortOk, "Sell отфильтрован", style = shape
 bgcolor(showSqzBg and sqzOn ? color.new(color.orange, 85) : na, title = "Сквиз (низкая волатильность)")
 barcolor(paintBars ? (src > utStop ? color.green : color.red) : na)
 
-alertcondition(longSignal,  "Strategy Long",  "UT Bot + CCI + SQZMOM: сигнал LONG")
-alertcondition(shortSignal, "Strategy Short", "UT Bot + CCI + SQZMOM: сигнал SHORT")
+alertcondition(longSignal,  "Strategy Long",  "Universal Strategy: сигнал LONG")
+alertcondition(shortSignal, "Strategy Short", "Universal Strategy: сигнал SHORT")
