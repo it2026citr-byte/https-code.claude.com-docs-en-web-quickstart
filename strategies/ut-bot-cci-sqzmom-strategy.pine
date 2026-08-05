@@ -1,7 +1,9 @@
 //@version=6
-// Универсальная стратегия: UT Bot Alerts (QuantNomad) — входы, CCI (Дональд Ламберт) — фильтр.
-// UT Bot даёт сигнал по пересечению ценой ATR-трейлинг-стопа; CCI отсекает сигналы против импульса.
-strategy("UT Bot + CCI Strategy", overlay = true,
+// Универсальная стратегия из трёх компонентов:
+//   1. UT Bot Alerts (QuantNomad)        — генератор входов по ATR-трейлинг-стопу
+//   2. CCI (Дональд Ламберт)             — фильтр импульса
+//   3. Squeeze Momentum [LazyBear]       — фильтр волатильности и направления momentum
+strategy("UT Bot + CCI + SQZMOM Strategy", overlay = true,
      initial_capital = 10000,
      default_qty_type = strategy.percent_of_equity, default_qty_value = 100,
      commission_type = strategy.commission.percent, commission_value = 0.05)
@@ -32,8 +34,35 @@ cciMode = input.string("Тренд (CCI > 0)", "Режим фильтра",
      options = ["Тренд (CCI > 0)", "Зоны ±100 (не входить в перекупленность)"], group = "CCI")
 
 cci = ta.cci(hlc3, cciLen)
-longOk  = not useCci or (cciMode == "Тренд (CCI > 0)" ? cci > 0 : cci < 100)
-shortOk = not useCci or (cciMode == "Тренд (CCI > 0)" ? cci < 0 : cci > -100)
+cciLongOk  = not useCci or (cciMode == "Тренд (CCI > 0)" ? cci > 0 : cci < 100)
+cciShortOk = not useCci or (cciMode == "Тренд (CCI > 0)" ? cci < 0 : cci > -100)
+
+// ───────── Squeeze Momentum [LazyBear] ─────────
+useSqzDir  = input.bool(true,  "Фильтр по направлению momentum",             group = "Squeeze Momentum")
+useSqzWait = input.bool(false, "Не входить во время сквиза (ждать выхода)",  group = "Squeeze Momentum")
+showSqzBg  = input.bool(true,  "Подсвечивать сквиз фоном",                   group = "Squeeze Momentum")
+bbLen      = input.int(20,     "BB Length",                                  group = "Squeeze Momentum")
+bbMult     = input.float(2.0,  "BB MultFactor",  step = 0.1,                 group = "Squeeze Momentum")
+kcLen      = input.int(20,     "KC Length",                                  group = "Squeeze Momentum")
+kcMult     = input.float(1.5,  "KC MultFactor",  step = 0.1,                 group = "Squeeze Momentum")
+useTR      = input.bool(true,  "Use TrueRange (KC)",                         group = "Squeeze Momentum")
+
+// В оригинале LazyBear в расчёте BB стояла multKC (опечатка, исправленная автором) — здесь используется bbMult
+basis   = ta.sma(close, bbLen)
+dev     = bbMult * ta.stdev(close, bbLen)
+upperBB = basis + dev
+lowerBB = basis - dev
+maKC    = ta.sma(close, kcLen)
+rng     = useTR ? ta.tr : high - low
+rngMa   = ta.sma(rng, kcLen)
+upperKC = maKC + rngMa * kcMult
+lowerKC = maKC - rngMa * kcMult
+sqzOn   = lowerBB > lowerKC and upperBB < upperKC
+
+sqzVal = ta.linreg(close - math.avg(math.avg(ta.highest(high, kcLen), ta.lowest(low, kcLen)), ta.sma(close, kcLen)), kcLen, 0)
+
+sqzLongOk  = (not useSqzDir or sqzVal > 0) and (not useSqzWait or not sqzOn)
+sqzShortOk = (not useSqzDir or sqzVal < 0) and (not useSqzWait or not sqzOn)
 
 // ───────── Управление позицией ─────────
 enableLong  = input.bool(true,  "Лонги",  group = "Позиции")
@@ -41,6 +70,9 @@ enableShort = input.bool(true,  "Шорты",  group = "Позиции")
 useSlTp     = input.bool(false, "ATR стоп-лосс / тейк-профит", group = "Позиции")
 slMult      = input.float(2.0,  "Стоп-лосс, ATR ×",  minval = 0.1, step = 0.1, group = "Позиции")
 tpMult      = input.float(3.0,  "Тейк-профит, ATR ×", minval = 0.1, step = 0.1, group = "Позиции")
+
+longOk  = cciLongOk and sqzLongOk
+shortOk = cciShortOk and sqzShortOk
 
 longSignal  = utBuy  and longOk
 shortSignal = utSell and shortOk
@@ -53,7 +85,7 @@ if shortSignal and enableShort
     entryAtr := atrVal
     strategy.entry("Short", strategy.short)
 
-// Противоположный сигнал UT Bot всегда закрывает позицию (даже если фильтр не пустил новый вход)
+// Противоположный сигнал UT Bot всегда закрывает позицию (даже если фильтры не пустили новый вход)
 if utSell and strategy.position_size > 0
     strategy.close("Long", comment = "UT exit")
 if utBuy and strategy.position_size < 0
@@ -68,10 +100,11 @@ if useSlTp and strategy.position_size < 0
 plot(utStop, "ATR Trailing Stop", color = src > utStop ? color.green : color.red, linewidth = 2)
 plotshape(longSignal,  "Buy",  style = shape.labelup,   location = location.belowbar, color = color.green, text = "Buy",  textcolor = color.white, size = size.tiny)
 plotshape(shortSignal, "Sell", style = shape.labeldown, location = location.abovebar, color = color.red,   text = "Sell", textcolor = color.white, size = size.tiny)
-plotshape(utBuy and not longOk,   "Buy отфильтрован CCI",  style = shape.xcross, location = location.belowbar, color = color.gray, size = size.tiny)
-plotshape(utSell and not shortOk, "Sell отфильтрован CCI", style = shape.xcross, location = location.abovebar, color = color.gray, size = size.tiny)
+plotshape(utBuy and not longOk,   "Buy отфильтрован",  style = shape.xcross, location = location.belowbar, color = color.gray, size = size.tiny)
+plotshape(utSell and not shortOk, "Sell отфильтрован", style = shape.xcross, location = location.abovebar, color = color.gray, size = size.tiny)
 
+bgcolor(showSqzBg and sqzOn ? color.new(color.orange, 85) : na, title = "Сквиз (низкая волатильность)")
 barcolor(paintBars ? (src > utStop ? color.green : color.red) : na)
 
-alertcondition(longSignal,  "UT+CCI Long",  "UT Bot + CCI: сигнал LONG")
-alertcondition(shortSignal, "UT+CCI Short", "UT Bot + CCI: сигнал SHORT")
+alertcondition(longSignal,  "Strategy Long",  "UT Bot + CCI + SQZMOM: сигнал LONG")
+alertcondition(shortSignal, "Strategy Short", "UT Bot + CCI + SQZMOM: сигнал SHORT")
