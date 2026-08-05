@@ -3,11 +3,14 @@
 //   1. UT Bot Alerts (QuantNomad)        — генератор входов по ATR-трейлинг-стопу
 //   2. CCI (Дональд Ламберт)             — фильтр импульса
 //   3. Squeeze Momentum [LazyBear]       — фильтр волатильности и направления momentum
-//   4. Smart Money Concepts (структура)  — фильтр по BOS/CHoCH: торговля только по структуре рынка
+//   4. Smart Money Concepts              — фильтр структуры рынка (BOS/CHoCH, Internal + Swing)
+//      и Premium/Discount зоны; логика структуры адаптирована из
+//      "Smart Money Concepts [LuxAlgo]" (CC BY-NC-SA 4.0, © LuxAlgo)
 strategy("Universal Strategy: UT Bot + CCI + SQZMOM + SMC", overlay = true,
      initial_capital = 10000,
      default_qty_type = strategy.percent_of_equity, default_qty_value = 100,
-     commission_type = strategy.commission.percent, commission_value = 0.05)
+     commission_type = strategy.commission.percent, commission_value = 0.05,
+     max_labels_count = 500)
 
 // ───────── UT Bot ─────────
 utKey       = input.float(1.0,  "Key Value (чувствительность)", minval = 0.1, step = 0.1, group = "UT Bot")
@@ -65,42 +68,95 @@ sqzVal = ta.linreg(close - math.avg(math.avg(ta.highest(high, kcLen), ta.lowest(
 sqzLongOk  = (not useSqzDir or sqzVal > 0) and (not useSqzWait or not sqzOn)
 sqzShortOk = (not useSqzDir or sqzVal < 0) and (not useSqzWait or not sqzOn)
 
-// ───────── Smart Money Concepts: структура рынка (BOS / CHoCH) ─────────
-// Свинги по pivot-точкам; пробой последнего свинг-хая закрытием = бычий слом,
-// свинг-лоя = медвежий. BOS — слом по тренду, CHoCH — против (смена характера).
-useSmc     = input.bool(true, "Включить SMC-фильтр (структура рынка)", group = "Smart Money Concepts")
-smcLen     = input.int(10,    "Период свингов (pivot)", minval = 2,    group = "Smart Money Concepts")
-showStruct = input.bool(true, "Показывать метки BOS/CHoCH",            group = "Smart Money Concepts")
+// ───────── Smart Money Concepts (по LuxAlgo) ─────────
+// Leg-детектор: бар size баров назад выше максимума последних size баров — начался
+// медвежий leg (зафиксирован свинг-хай); ниже минимума — бычий leg (свинг-лой).
+// Пробой закрытием последнего свинг-хая/лоя = BOS (по тренду) или CHoCH (против тренда).
+useSmc       = input.bool(true,  "Включить SMC-фильтр структуры",  group = "Smart Money Concepts")
+smcMode      = input.string("Internal (быстрая)", "Какую структуру использовать",
+     options = ["Internal (быстрая)", "Swing (медленная)", "Обе"],  group = "Smart Money Concepts")
+smcInternalLen = input.int(5,  "Internal: длина свинга", minval = 2, group = "Smart Money Concepts")
+smcSwingLen    = input.int(50, "Swing: длина свинга",    minval = 10, group = "Smart Money Concepts")
+showStruct   = input.bool(true,  "Показывать метки BOS/CHoCH",     group = "Smart Money Concepts")
+useZones     = input.bool(false, "Premium/Discount фильтр (лонг в дисконте, шорт в премиуме)", group = "Smart Money Concepts")
+showEq       = input.bool(false, "Показывать линию равновесия",    group = "Smart Money Concepts")
 
-ph = ta.pivothigh(high, smcLen, smcLen)
-pl = ta.pivotlow(low, smcLen, smcLen)
+f_leg(int size) =>
+    var int leg = 0
+    if high[size] > ta.highest(high, size)
+        leg := -1
+    else if low[size] < ta.lowest(low, size)
+        leg := 1
+    leg
 
-var float lastSwingHigh = na
-var float lastSwingLow  = na
-var int   structDir     = 0   // 1 — бычья структура, -1 — медвежья, 0 — не определена
-if not na(ph)
-    lastSwingHigh := ph
-if not na(pl)
-    lastSwingLow := pl
-
-breakUp = not na(lastSwingHigh) and close > lastSwingHigh
-breakDn = not na(lastSwingLow)  and close < lastSwingLow
-
-if breakUp
+// Internal-структура
+iLeg = f_leg(smcInternalLen)
+var float iPH = na
+var float iPL = na
+var bool  iPHcrossed = true
+var bool  iPLcrossed = true
+var int   iTrend = 0
+if ta.change(iLeg) != 0 and iLeg == -1
+    iPH := high[smcInternalLen]
+    iPHcrossed := false
+if ta.change(iLeg) != 0 and iLeg == 1
+    iPL := low[smcInternalLen]
+    iPLcrossed := false
+if not iPHcrossed and ta.crossover(close, iPH)
     if showStruct
-        label.new(bar_index, lastSwingHigh, structDir == -1 ? "CHoCH" : "BOS",
-             style = label.style_label_down, color = color.new(color.teal, 20), textcolor = color.white, size = size.small)
-    structDir := 1
-    lastSwingHigh := na
-if breakDn
+        label.new(bar_index, iPH, iTrend == -1 ? "CHoCH" : "BOS", style = label.style_label_down,
+             color = color.new(color.teal, 40), textcolor = color.white, size = size.tiny)
+    iTrend := 1
+    iPHcrossed := true
+if not iPLcrossed and ta.crossunder(close, iPL)
     if showStruct
-        label.new(bar_index, lastSwingLow, structDir == 1 ? "CHoCH" : "BOS",
-             style = label.style_label_up, color = color.new(color.maroon, 20), textcolor = color.white, size = size.small)
-    structDir := -1
-    lastSwingLow := na
+        label.new(bar_index, iPL, iTrend == 1 ? "CHoCH" : "BOS", style = label.style_label_up,
+             color = color.new(color.maroon, 40), textcolor = color.white, size = size.tiny)
+    iTrend := -1
+    iPLcrossed := true
 
-smcLongOk  = not useSmc or structDir >= 0
-smcShortOk = not useSmc or structDir <= 0
+// Swing-структура
+sLeg = f_leg(smcSwingLen)
+var float sPH = na
+var float sPL = na
+var bool  sPHcrossed = true
+var bool  sPLcrossed = true
+var int   sTrend = 0
+var float trailTop = na
+var float trailBot = na
+if ta.change(sLeg) != 0 and sLeg == -1
+    sPH := high[smcSwingLen]
+    sPHcrossed := false
+    trailTop := sPH
+if ta.change(sLeg) != 0 and sLeg == 1
+    sPL := low[smcSwingLen]
+    sPLcrossed := false
+    trailBot := sPL
+if not sPHcrossed and ta.crossover(close, sPH)
+    if showStruct
+        label.new(bar_index, sPH, sTrend == -1 ? "CHoCH" : "BOS", style = label.style_label_down,
+             color = color.new(color.teal, 0), textcolor = color.white, size = size.small)
+    sTrend := 1
+    sPHcrossed := true
+if not sPLcrossed and ta.crossunder(close, sPL)
+    if showStruct
+        label.new(bar_index, sPL, sTrend == 1 ? "CHoCH" : "BOS", style = label.style_label_up,
+             color = color.new(color.maroon, 0), textcolor = color.white, size = size.small)
+    sTrend := -1
+    sPLcrossed := true
+
+// Premium/Discount: равновесие текущего свингового диапазона
+trailTop := math.max(nz(trailTop, high), high)
+trailBot := math.min(nz(trailBot, low), low)
+equilibrium = math.avg(trailTop, trailBot)
+
+structLongOk  = smcMode == "Internal (быстрая)" ? iTrend >= 0 : smcMode == "Swing (медленная)" ? sTrend >= 0 : iTrend >= 0 and sTrend >= 0
+structShortOk = smcMode == "Internal (быстрая)" ? iTrend <= 0 : smcMode == "Swing (медленная)" ? sTrend <= 0 : iTrend <= 0 and sTrend <= 0
+zoneLongOk    = not useZones or close < equilibrium
+zoneShortOk   = not useZones or close > equilibrium
+
+smcLongOk  = not useSmc or (structLongOk and zoneLongOk)
+smcShortOk = not useSmc or (structShortOk and zoneShortOk)
 
 // ───────── Управление позицией ─────────
 enableLong  = input.bool(true,  "Лонги",  group = "Позиции")
@@ -136,6 +192,7 @@ if useSlTp and strategy.position_size < 0
 
 // ───────── Визуализация и алерты ─────────
 plot(utStop, "ATR Trailing Stop", color = src > utStop ? color.green : color.red, linewidth = 2)
+plot(showEq ? equilibrium : na, "Равновесие (Premium/Discount)", color = color.new(color.gray, 30), style = plot.style_circles)
 plotshape(longSignal,  "Buy",  style = shape.labelup,   location = location.belowbar, color = color.green, text = "Buy",  textcolor = color.white, size = size.tiny)
 plotshape(shortSignal, "Sell", style = shape.labeldown, location = location.abovebar, color = color.red,   text = "Sell", textcolor = color.white, size = size.tiny)
 plotshape(utBuy and not longOk,   "Buy отфильтрован",  style = shape.xcross, location = location.belowbar, color = color.gray, size = size.tiny)
