@@ -2,6 +2,7 @@ import { db, now } from "./db.js";
 import { cfg, log } from "./config.js";
 import { topPairs } from "./data/tradingview.js";
 import { fetchKlines, TF_SEC } from "./data/mexc.js";
+import { dailyVolatility } from "./indicators.js";
 import { logEvent } from "./journal.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
@@ -19,9 +20,34 @@ async function mapLimit(items, n, fn) {
 
 const insertSignal = db.prepare(
   "INSERT OR IGNORE INTO signals" +
-  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status) " +
-  "VALUES(?,?,?,?,?,?,?,?,?,?,'new')"
+  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol) " +
+  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?)"
 );
+
+/**
+ * Средний дневной ход за год, 3 месяца и 2 недели.
+ * Дневные свечи тянем только по парам, где сигнал уже нашёлся, —
+ * тащить их по всем 68 парам каждые 15 минут незачем.
+ */
+const volCache = new Map();
+async function volatility(symbol) {
+  const hit = volCache.get(symbol);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.v;
+  try {
+    const d = await fetchKlines(symbol, "1d", 400);
+    const v = {
+      y: dailyVolatility(d, 365),
+      q: dailyVolatility(d, 90),
+      w: dailyVolatility(d, 14),
+      n: d.length,          // сколько дней истории реально есть
+    };
+    volCache.set(symbol, { at: Date.now(), v });
+    return v;
+  } catch (e) {
+    log(`волатильность ${symbol} не посчиталась:`, e.message);
+    return null;
+  }
+}
 
 /**
  * Один проход по рынку. Стратегии считаются на последнем ЗАКРЫТОМ баре —
@@ -53,10 +79,13 @@ export async function scanMarket(strategies, onSignal) {
   let sent = 0;
   for (const f of found) {
     if (cfg.maxSignalsPerScan && sent >= cfg.maxSignalsPerScan) break;
+    const vol = await volatility(f.symbol);
     const r = insertSignal.run(f.strategy, f.symbol, f.side, f.tf, f.entry, f.sl,
-      JSON.stringify(f.targets), f.reason, now(), f.barTime);
+      JSON.stringify(f.targets), f.reason, now(), f.barTime,
+      vol ? JSON.stringify(vol) : null);
     if (!r.changes) continue;                       // уже был такой — не дублируем
     const id = Number(r.lastInsertRowid);
+    f.vol = vol;
     logEvent({ kind: "signal", strategy: f.strategy, symbol: f.symbol,
                side: f.side, price: f.entry, text: f.reason });
     await onSignal({ id, ...f });

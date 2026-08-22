@@ -102,12 +102,24 @@ export function card(p) {
 const TF_RU = { "15m": "15м", "1h": "1ч", "4h": "4ч", "1d": "1д" };
 
 /** Карточка нового сигнала — то, на что жмут «Взял» или «Пропустил». */
+const v1 = (x) => x == null ? "—" : x.toFixed(1) + "%";
+
+/** ⟨1г 4.9% · 3м 6.3% · 2н 8.1%⟩ — средний дневной ход монеты. */
+function volBlock(vol) {
+  const v = typeof vol === "string" ? (() => { try { return JSON.parse(vol); } catch { return null; } })() : vol;
+  if (!v) return "";
+  // Монета моложе года — говорим об этом тильдой, а не выдаём
+  // неполное окно за годовое.
+  const y = v.n != null && v.n < 365 && v.y != null ? "~" + v1(v.y) : v1(v.y);
+  return ` ⟨1г ${y} · 3м ${v1(v.q)} · 2н ${v1(v.w)}⟩ `;
+}
+
 export function signalCard(s) {
   const long = s.side === "long";
   const pct = Math.abs(s.sl - s.entry) / s.entry * 100;
   return [
-    `${long ? "📈" : "📉"} <b>${long ? "LONG" : "SHORT"}</b> ${s.symbol}   ` +
-      `<i>${s.strategy} · ${TF_RU[s.tf] ?? s.tf}</i>`,
+    `${long ? "📈" : "📉"} <b>${long ? "LONG" : "SHORT"}</b> ${s.symbol}` +
+      volBlock(s.vol) + `  <i>${s.strategy} · ${TF_RU[s.tf] ?? s.tf}</i>`,
     `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)`,
     `Цели ${s.targets.map(fmtPrice).join(" · ")}`,
     `<i>${s.reason}</i>`,

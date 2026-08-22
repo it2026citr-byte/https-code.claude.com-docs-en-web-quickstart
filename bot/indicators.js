@@ -195,3 +195,17 @@ export function structure(c, len = 10) {
   }
   return { lastHigh, lastLow };
 }
+
+/**
+ * Средний дневной ход в процентах: сколько монета в среднем проходит
+ * от низа до верха за сутки. Считается по дневным свечам.
+ * null, если истории не хватает — врать средним по трём свечам не станем.
+ */
+export function dailyVolatility(daily, days) {
+  const s = daily.slice(-days);
+  const need = Math.min(days, Math.round(days * 0.8));
+  if (s.length < need || s.length < 5) return null;
+  let sum = 0;
+  for (const c of s) sum += (c.h - c.l) / c.c;
+  return sum / s.length * 100;
+}
