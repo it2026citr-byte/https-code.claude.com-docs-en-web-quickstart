@@ -24,6 +24,27 @@ alive() {
   [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
 }
 
+# Ищем забытые копии бота напрямую в /proc — без ps и pkill,
+# которых в урезанной сборке может не оказаться.
+# Проверяем не текст целиком, а что процесс ЯВЛЯЕТСЯ node: иначе
+# в улов попадают оболочки, где эти слова просто упомянуты.
+strays() {
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    [ "$pid" = "$$" ] && continue
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
+    [ -z "$cmd" ] && continue
+    exe="${cmd%% *}"
+    case "$exe" in
+      node|*/node) ;;
+      *) continue ;;
+    esac
+    case "$cmd" in
+      *start.js*|*index.js*) echo "$pid" ;;
+    esac
+  done
+}
+
 if [ "$1" = "stop" ]; then
   STOPPED=0
   # Сначала сторож, чтобы он не поднял бота обратно, потом сам бот.
@@ -36,6 +57,37 @@ if [ "$1" = "stop" ]; then
     rm -f "$NODEPID"
   fi
   [ "$STOPPED" = 1 ] && echo "остановлен" || echo "не был запущен"
+  exit 0
+fi
+
+if [ "$1" = "restart" ]; then
+  echo "1/4 останавливаю сторожа…"
+  sh "$0" stop >/dev/null 2>&1
+
+  echo "2/4 ищу забытые копии бота…"
+  FOUND=0
+  for pid in $(strays); do
+    kill "$pid" 2>/dev/null && FOUND=$((FOUND+1))
+  done
+  sleep 2
+  for pid in $(strays); do kill -9 "$pid" 2>/dev/null; done
+  [ "$FOUND" -gt 0 ] && echo "    убрано копий: $FOUND" || echo "    забытых копий не было"
+
+  echo "3/4 запускаю заново…"
+  rm -f "$PIDFILE" "$NODEPID"
+  (nohup sh "$0" >/dev/null 2>&1 &)
+  sleep 6
+
+  echo "4/4 проверяю:"
+  sh "$0" status | sed 's/^/    /'
+  echo
+  echo "последние строки лога:"
+  tail -n 5 "$LOG" 2>/dev/null | sed 's/^/    /'
+  echo
+  if grep -q "ещё один экземпляр" "$LOG" 2>/dev/null; then
+    echo "ВНИМАНИЕ: в логе есть следы конфликта двух копий."
+    echo "Если он в самом конце — повтори restart ещё раз."
+  fi
   exit 0
 fi
 
