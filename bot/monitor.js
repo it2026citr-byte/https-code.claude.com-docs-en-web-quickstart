@@ -1,0 +1,148 @@
+import { db, now, openPositions } from "./db.js";
+import { log } from "./config.js";
+import { prices, fetchKlines, TF_SEC } from "./data/mexc.js";
+import { logEvent, goldenTime } from "./journal.js";
+import { fmtPrice } from "./format.js";
+
+/** Тревога не повторяется: уникальный ключ (позиция, уровень, причина). */
+const insAlert = db.prepare(
+  "INSERT OR IGNORE INTO alerts(position_id,level,reason,text,created_at) VALUES(?,?,?,?,?)"
+);
+const once = (posId, level, reason, text) =>
+  insAlert.run(posId, level, reason, text ?? "", now()).changes > 0;
+
+export const stopDist = (p) => Math.abs(p.entry - p.sl);
+
+/**
+ * Лесенка: 20% позиции на каждой из пяти целей. После первой цели стоп
+ * уходит в безубыток — ровно так считался бэктест, по которому выбраны
+ * пороги входа.
+ */
+export function banked(tpHit) {
+  let s = 0;
+  for (let n = 1; n <= tpHit; n++) s += 0.2 * 0.5 * n;
+  return s;
+}
+export function rAt(p, price) {
+  const d = stopDist(p);
+  if (!d) return 0;
+  const left = Math.max(0, 1 - 0.2 * p.tp_hit);
+  const move = (p.side === "long" ? price - p.entry : p.entry - price) / d;
+  return banked(p.tp_hit) + left * move;
+}
+
+export function closePosition(p, price, reason) {
+  const r = rAt(p, price);
+  db.prepare(
+    "UPDATE positions SET status='closed', closed_at=?, close_price=?, " +
+    "close_reason=?, r_result=? WHERE id=?"
+  ).run(now(), price, reason, r, p.id);
+  logEvent({ kind: reason === "stop" ? "stop" : "closed", strategy: p.strategy,
+             symbol: p.symbol, side: p.side, price, r, text: reason });
+  return r;
+}
+
+const rTxt = (r) => `${r > 0 ? "+" : ""}${r.toFixed(2)}R`;
+
+/**
+ * Такт присмотра.
+ *
+ * Цели и стоп проверяются по текущей цене — это дёшево, можно часто.
+ * Слом стратегии требует индикаторов, поэтому считается один раз
+ * на закрытии бара «родного» таймфрейма позиции.
+ */
+export async function monitorTick({ strategies, notify, focus }) {
+  const pos = openPositions();
+  if (!pos.length) return { checked: 0, events: 0 };
+
+  const px = await prices([...new Set(pos.map(p => p.symbol))]);
+  let events = 0;
+
+  for (const p of pos) {
+    const price = px[p.symbol];
+    if (price == null) continue;
+    const long = p.side === "long";
+    const targets = JSON.parse(p.targets);
+
+    // --- цели -------------------------------------------------------------
+    let hit = p.tp_hit;
+    while (hit < targets.length &&
+           (long ? price >= targets[hit] : price <= targets[hit])) hit++;
+
+    if (hit > p.tp_hit) {
+      const toBreakeven = p.tp_hit === 0;
+      const newSl = toBreakeven ? p.entry : p.sl_current;
+      db.prepare("UPDATE positions SET tp_hit=?, sl_current=? WHERE id=?")
+        .run(hit, newSl, p.id);
+      p.tp_hit = hit; p.sl_current = newSl;
+
+      if (once(p.id, "target", `t${hit}`, "")) {
+        events++;
+        logEvent({ kind: "target", strategy: p.strategy, symbol: p.symbol,
+                   side: p.side, price, r: banked(hit), text: `цель ${hit}` });
+        const more = hit < targets.length
+          ? `Следующая цель ${fmtPrice(targets[hit])}`
+          : "Все цели взяты";
+        await notify(p.id,
+          `🎯 <b>Цель ${hit}</b> · ${fmtPrice(targets[hit - 1])}\n` +
+          `${p.symbol} ${long ? "LONG" : "SHORT"} · зафиксировано <b>${rTxt(banked(hit))}</b>\n` +
+          (toBreakeven ? `Стоп переведён в безубыток ${fmtPrice(p.entry)}\n` : "") +
+          `<i>${more}</i>`);
+      }
+
+      if (hit >= targets.length) {
+        const r = closePosition(p, targets[targets.length - 1], "target");
+        await notify(p.id,
+          `🟢 <b>Закрыта по последней цели</b>\n` +
+          `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
+          `<i>${goldenTime(now())}</i>`);
+        continue;
+      }
+    }
+
+    // --- стоп -------------------------------------------------------------
+    const sl = p.sl_current;
+    if (long ? price <= sl : price >= sl) {
+      const be = p.tp_hit > 0;
+      const r = closePosition(p, sl, "stop");
+      await notify(p.id,
+        `${be ? "⚪️" : "🔴"} <b>${be ? "Стоп в безубытке" : "Стоп"}</b> · ${fmtPrice(sl)}\n` +
+        `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
+        `<i>${goldenTime(now())}</i>`);
+      events++;
+      continue;
+    }
+
+    // --- слом стратегии ---------------------------------------------------
+    const st = strategies.find(s => s.id === p.strategy);
+    if (!st?.invalidated) continue;
+    const step = TF_SEC[st.timeframe] ?? 3600;
+    const curBar = Math.floor(now() / step) * step - step;
+    if ((p.last_bar ?? 0) >= curBar) continue;
+
+    let c;
+    try { c = await fetchKlines(p.symbol, st.timeframe, 300); }
+    catch (e) { log(`свечи ${p.symbol} не пришли:`, e.message); continue; }
+    if (c.length < 160) continue;
+    const i = c.length - 2;
+    db.prepare("UPDATE positions SET last_bar=? WHERE id=?").run(c[i].t, p.id);
+
+    const bad = st.invalidated(c, st.prepare(c), i, p);
+    if (!bad) continue;
+    if (!once(p.id, "red", bad.reason, bad.text)) continue;
+
+    events++;
+    logEvent({ kind: "broken", strategy: p.strategy, symbol: p.symbol,
+               side: p.side, price, r: rAt(p, price), text: bad.text });
+    await notify(p.id,
+      `🟠 <b>ВЫХОД — стратегия сломана</b>\n` +
+      `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
+      `${bad.text}\n\n` +
+      `Цена ${fmtPrice(price)} · стоп ${fmtPrice(sl)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
+      `<i>Посылка сделки умерла. Выходи, не дожидаясь стопа.</i>`,
+      [[{ text: "✅ Вышел", callback_data: `exit:${p.id}` },
+        { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]);
+  }
+
+  return { checked: pos.length, events };
+}

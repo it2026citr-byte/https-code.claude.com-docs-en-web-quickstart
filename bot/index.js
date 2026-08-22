@@ -6,7 +6,8 @@ import {
 import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
          answerCallback, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
-import { prices } from "./data/mexc.js";
+import { prices, lastPrice } from "./data/mexc.js";
+import { monitorTick, closePosition, rAt } from "./monitor.js";
 import { loadStrategies } from "./strategies/index.js";
 import { scanMarket } from "./engine.js";
 import { startLoops, startReports } from "./scheduler.js";
@@ -55,12 +56,10 @@ async function scanTick() {
 }
 
 async function watchTick({ focus }) {
-  const pos = openPositions();
-  if (!pos.length) return;
-  const px = await prices([...new Set(pos.map(p => p.symbol))]);
+  const r = await monitorTick({ strategies: STRATEGIES, focus, notify: postUpdate });
   setSetting("last_market_seen", now());
-  log(`присмотр${focus ? " (фокус)" : ""}: ${pos.length} позиций, цены получены по ${Object.keys(px).length}`);
-  // Проверка целей, стопа и нарушения стратегии — этап 3.
+  if (r.events)
+    log(`присмотр${focus ? " (фокус)" : ""}: ${r.checked} позиций, событий ${r.events}`);
 }
 
 /**
@@ -104,6 +103,8 @@ const HELP = `<b>Что я умею</b>
 /scan — вернуться к поиску новых монет
 /pulse — включить/выключить сводку раз в 15 минут
 
+/positions — открытые сделки, текущий результат, закрыть вручную
+
 <b>Журнал</b>
 /results — итоги закрытых сигналов за сегодня
 /log — итоги месяца плюс выгрузка файлами
@@ -112,10 +113,11 @@ const HELP = `<b>Что я умею</b>
 /help — это сообщение
 
 <i>Telegram понимает только латиницу в командах, но я отзываюсь и на русские:
-/статус /фокус /скан /пульс /итоги /журнал /стата /доступ /помощь</i>
+/статус /фокус /скан /пульс /сделки /итоги /журнал /стата /доступ /помощь</i>
 
 <i>Сигналы приходят карточкой с кнопками «Взял» и «Пропустил».
-Скоро: тревоги на выход до стопа.</i>`;
+По взятой сделке вся история — ниткой ответов под карточкой:
+цели, перенос стопа в безубыток, слом стратегии, закрытие.</i>`;
 
 async function statusText() {
   const mode = getMode();
@@ -244,6 +246,28 @@ async function onMessage(msg) {
       await send(chatId, on ? "Пульс выключен." : "Пульс включён — сводка раз в 15 минут.");
       break;
     }
+    case "/positions": case "/сделки": {
+      const ps = openPositions();
+      if (!ps.length) { await send(chatId, "Открытых сделок нет."); break; }
+      const px = await prices([...new Set(ps.map(p => p.symbol))]).catch(() => ({}));
+      for (const p of ps) {
+        const cur = px[p.symbol];
+        const tg = JSON.parse(p.targets);
+        const r = cur == null ? null : rAt(p, cur);
+        await send(chatId, [
+          `${p.side === "long" ? "📈" : "📉"} <b>${p.symbol}</b> ${p.side === "long" ? "LONG" : "SHORT"} · <i>${p.strategy}</i>`,
+          `Вход ${fmtPrice(p.entry)} · стоп ${fmtPrice(p.sl_current)}` +
+            (p.sl_current !== p.sl ? " <i>(безубыток)</i>" : ""),
+          `Целей взято ${p.tp_hit} из ${tg.length}` +
+            (p.tp_hit < tg.length ? ` · следующая ${fmtPrice(tg[p.tp_hit])}` : ""),
+          cur == null ? "" : `Сейчас ${fmtPrice(cur)} · <b>${r > 0 ? "+" : ""}${r.toFixed(2)}R</b>`,
+          `<i>открыта ${fmtAgo(now() - p.opened_at)} назад</i>`,
+        ].filter(Boolean).join("\n"),
+        [[{ text: "⚫️ Закрыть вручную", callback_data: `close:${p.id}` }]]);
+      }
+      break;
+    }
+
     case "/users": case "/доступ": {
       if (chatId !== ownerId()) { await send(chatId, "Команда только для администратора."); break; }
       const us = listUsers();
@@ -342,6 +366,31 @@ async function onCallback(q) {
   if (chatId !== ownerId() && me?.role !== "approved") {
     await answerCallback(q.id, "Приватный бот"); return;
   }
+
+  // Решения по открытой позиции.
+  if (act0 === "exit" || act0 === "stay" || act0 === "close") {
+    const pid = Number(String(q.data).split(":")[1]);
+    const p = db.prepare("SELECT * FROM positions WHERE id=?").get(pid);
+    if (!p) { await answerCallback(q.id, "Позиция не найдена"); return; }
+    if (p.status !== "open") { await answerCallback(q.id, "Сделка уже закрыта"); return; }
+
+    if (act0 === "stay") {
+      await answerCallback(q.id, "Понял, продолжаю следить");
+      await postUpdate(pid, "⏳ <i>Остаёшься в сделке. Слежу дальше — стоп и цели в силе.</i>");
+      return;
+    }
+
+    let px;
+    try { px = await lastPrice(p.symbol); }
+    catch { await answerCallback(q.id, "Цена не пришла, попробуй ещё раз"); return; }
+    const reason = act0 === "exit" ? "broken" : "manual";
+    const r = closePosition(p, px, reason);
+    await answerCallback(q.id, "Закрыл");
+    await postUpdate(pid,
+      `${act0 === "exit" ? "🟠" : "⚫️"} <b>Сделка закрыта ${act0 === "exit" ? "по слому стратегии" : "вручную"}</b>\n` +
+      `${p.symbol} · выход ${fmtPrice(px)} · итог <b>${r > 0 ? "+" : ""}${r.toFixed(2)}R</b>`);
+    return;
+  }
   const [action, idStr] = String(q.data || "").split(":");
   const id = Number(idStr);
   const sig = db.prepare("SELECT * FROM signals WHERE id = ?").get(id);
@@ -415,6 +464,7 @@ async function main() {
     { command: "focus",  description: "следить только за взятыми сделками" },
     { command: "scan",   description: "искать новые точки входа" },
     { command: "pulse",  description: "сводка раз в 15 минут" },
+    { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },
     { command: "stats",  description: "статистика за всё время" },

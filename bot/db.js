@@ -120,6 +120,10 @@ CREATE TABLE IF NOT EXISTS candles (
   // чтобы в чате получалась нитка, а не россыпь сообщений.
   if (!cols.includes("msg_id"))
     db.exec("ALTER TABLE positions ADD COLUMN msg_id INTEGER");
+  // Время последнего бара, на котором проверяли слом стратегии:
+  // проверка тяжёлая, гонять её каждые 10 секунд незачем.
+  if (!cols.includes("last_bar"))
+    db.exec("ALTER TABLE positions ADD COLUMN last_bar INTEGER DEFAULT 0");
 }
 
 const _get = db.prepare("SELECT value FROM settings WHERE key = ?");

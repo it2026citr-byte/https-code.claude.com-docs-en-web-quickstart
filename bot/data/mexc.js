@@ -47,13 +47,28 @@ export async function lastPrice(symbol) {
   return +(await res.json()).price;
 }
 
-/** Несколько цен одним запросом — для монитора позиций. */
+/**
+ * Цены по списку пар.
+ *
+ * Запрос без параметра отдаёт ВСЕ ~2800 пар, около 150 КБ. В режиме фокуса
+ * это каждые 10 секунд — больше гигабайта в сутки, для телефона неприемлемо.
+ * Поэтому при небольшом списке спрашиваем поштучно: ответ на пару ~50 байт.
+ */
 export async function prices(symbols) {
+  const list = [...new Set(symbols)];
+  const out = {};
+
+  if (list.length <= 12) {
+    await Promise.all(list.map(async (s) => {
+      try { out[s] = await lastPrice(s); }
+      catch (e) { log(`цена ${s}:`, e.message); }
+    }));
+    return out;
+  }
+
   const res = await fetch(`${BASE}/ticker/price`);
   if (!res.ok) throw new Error(`MEXC цены: HTTP ${res.status}`);
-  const all = await res.json();
-  const want = new Set(symbols);
-  const out = {};
-  for (const r of all) if (want.has(r.symbol)) out[r.symbol] = +r.price;
+  const want = new Set(list);
+  for (const r of await res.json()) if (want.has(r.symbol)) out[r.symbol] = +r.price;
   return out;
 }
