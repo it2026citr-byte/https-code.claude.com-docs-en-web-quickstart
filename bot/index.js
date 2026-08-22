@@ -9,6 +9,8 @@ import { topPairs } from "./data/tradingview.js";
 import { prices, lastPrice } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt } from "./monitor.js";
 import { PARAMS, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
+import { checkAll, renderHealth } from "./health.js";
+import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
 import { scanMarket } from "./engine.js";
 import { startLoops, startReports } from "./scheduler.js";
@@ -154,7 +156,7 @@ const HELP = `<b>Что я умею</b>
 По взятой сделке вся история — ниткой ответов под карточкой:
 цели, перенос стопа в безубыток, слом стратегии, закрытие.</i>`;
 
-async function statusText() {
+async function statusText(withHealth = true) {
   const mode = getMode();
   const pos = openPositions();
   const seen = Number(getSetting("last_market_seen", "0"));
@@ -174,6 +176,12 @@ async function statusText() {
     for (const p of pos) {
       lines.push(`• ${p.side === "long" ? "📈" : "📉"} ${esc(p.symbol)} от ${fmtPrice(p.entry)} · ${esc(p.strategy)}`);
     }
+  }
+
+  if (withHealth) {
+    lines.push("", "<b>Связь:</b>");
+    lines.push(renderHealth(await checkAll()));
+    lines.push(`<i>свечей в кеше: ${cacheSize()} пар</i>`);
   }
   return lines.join("\n");
 }

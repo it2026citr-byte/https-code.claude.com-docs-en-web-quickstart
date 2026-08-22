@@ -1,8 +1,9 @@
 import { db, now, openPositions } from "./db.js";
 import { log } from "./config.js";
-import { prices, fetchKlines, TF_SEC } from "./data/mexc.js";
+import { prices, TF_SEC } from "./data/mexc.js";
+import { candles } from "./candles.js";
 import { logEvent, goldenTime } from "./journal.js";
-import { fmtPrice } from "./format.js";
+import { fmtPrice, fmtAgo } from "./format.js";
 
 /** Тревога не повторяется: уникальный ключ (позиция, уровень, причина). */
 const insAlert = db.prepare(
@@ -117,31 +118,62 @@ export async function monitorTick({ strategies, notify, focus }) {
     const st = strategies.find(s => s.id === p.strategy);
     if (!st?.invalidated) continue;
     const step = TF_SEC[st.timeframe] ?? 3600;
-    const curBar = Math.floor(now() / step) * step - step;
-    if ((p.last_bar ?? 0) >= curBar) continue;
+    const closedBar = Math.floor(now() / step) * step - step;
+    const barIsNew = (p.last_bar ?? 0) < closedBar;
+
+    // Вне фокуса считаем только на закрытии бара — это дёшево и достаточно.
+    // В фокусе смотрим ещё и внутрь формирующейся свечи: там рождается
+    // жёлтая тревога, дающая фору до закрытия часа.
+    if (!barIsNew && !focus) continue;
 
     let c;
-    try { c = await fetchKlines(p.symbol, st.timeframe, 300); }
+    try { c = await candles(p.symbol, st.timeframe, 300); }
     catch (e) { log(`свечи ${p.symbol} не пришли:`, e.message); continue; }
     if (c.length < 160) continue;
-    const i = c.length - 2;
-    db.prepare("UPDATE positions SET last_bar=? WHERE id=?").run(c[i].t, p.id);
 
-    const bad = st.invalidated(c, st.prepare(c), i, p);
-    if (!bad) continue;
-    if (!once(p.id, "red", bad.reason, bad.text)) continue;
+    const x = st.prepare(c);
+    const iClosed = c.length - 2;
+    const iLive = c.length - 1;
+
+    // --- красная: бар закрылся, сомнений нет ---
+    if (barIsNew) {
+      db.prepare("UPDATE positions SET last_bar=? WHERE id=?").run(c[iClosed].t, p.id);
+      const bad = st.invalidated(c, x, iClosed, p);
+      if (bad && once(p.id, "red", bad.reason, bad.text)) {
+        events++;
+        logEvent({ kind: "broken", strategy: p.strategy, symbol: p.symbol,
+                   side: p.side, price, r: rAt(p, price), text: bad.text });
+        await notify(p.id,
+          `🔴 <b>ВЫХОД — стратегия сломана</b>\n` +
+          `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
+          `${bad.text}\n\n` +
+          `Цена ${fmtPrice(price)} · стоп ${fmtPrice(sl)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
+          `<i>Подтверждено на закрытии бара. Выходи, не дожидаясь стопа.</i>`,
+          [[{ text: "✅ Вышел", callback_data: `exit:${p.id}` },
+            { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]);
+        continue;
+      }
+    }
+
+    // --- жёлтая: свеча ещё формируется, но условие уже выполнено ---
+    if (!focus) continue;
+    const early = st.invalidated(c, x, iLive, p);
+    if (!early) continue;
+    if (!once(p.id, "yellow", early.reason, early.text)) continue;
 
     events++;
-    logEvent({ kind: "broken", strategy: p.strategy, symbol: p.symbol,
-               side: p.side, price, r: rAt(p, price), text: bad.text });
+    const left = Math.max(0, (Math.floor(now() / step) * step + step) - now());
+    logEvent({ kind: "note", strategy: p.strategy, symbol: p.symbol, side: p.side,
+               price, text: `жёлтая тревога: ${early.text}` });
     await notify(p.id,
-      `🟠 <b>ВЫХОД — стратегия сломана</b>\n` +
+      `🟡 <b>Тревога — условие выхода выполнено</b>\n` +
       `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
-      `${bad.text}\n\n` +
-      `Цена ${fmtPrice(price)} · стоп ${fmtPrice(sl)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
-      `<i>Посылка сделки умерла. Выходи, не дожидаясь стопа.</i>`,
-      [[{ text: "✅ Вышел", callback_data: `exit:${p.id}` },
-        { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]);
+      `${early.text}\n\n` +
+      `Цена ${fmtPrice(price)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
+      `<i>Свеча ещё не закрылась, до закрытия ${fmtAgo(left)}. ` +
+      `Успеет отыграть — тревога снимется, нет — придёт красная.</i>`,
+      [[{ text: "✅ Вышел заранее", callback_data: `exit:${p.id}` },
+        { text: "⏳ Жду закрытия", callback_data: `stay:${p.id}` }]]);
   }
 
   return { checked: pos.length, events };
