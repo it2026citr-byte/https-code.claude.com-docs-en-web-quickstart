@@ -126,6 +126,10 @@ CREATE TABLE IF NOT EXISTS candles (
   // проверка тяжёлая, гонять её каждые 10 секунд незачем.
   if (!cols.includes("last_bar"))
     db.exec("ALTER TABLE positions ADD COLUMN last_bar INTEGER DEFAULT 0");
+  // Уехал ли стоп в безубыток. Отдельно от tp_hit: безубыток может
+  // встать раньше первой цели.
+  if (!cols.includes("be_armed"))
+    db.exec("ALTER TABLE positions ADD COLUMN be_armed INTEGER DEFAULT 0");
 }
 
 const _get = db.prepare("SELECT value FROM settings WHERE key = ?");

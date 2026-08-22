@@ -3,6 +3,7 @@ import { log } from "./config.js";
 import { prices, TF_SEC } from "./data/mexc.js";
 import { candles } from "./candles.js";
 import { logEvent, goldenTime } from "./journal.js";
+import { num } from "./runtime.js";
 import { fmtPrice, fmtAgo } from "./format.js";
 
 /** Тревога не повторяется: уникальный ключ (позиция, уровень, причина). */
@@ -74,6 +75,29 @@ export async function monitorTick({ strategies, notify, focus }) {
     if (price == null) continue;
     const long = p.side === "long";
     const targets = JSON.parse(p.targets);
+    const d = stopDist(p);
+
+    // --- безубыток раньше первой цели -------------------------------------
+    // Отдельный рычаг: чем раньше стоп уезжает в ноль, тем меньше
+    // убыточных сделок и тем меньше прибыль. Крутится из /settings.
+    const beAt = num("be_at") / 100;
+    if (!p.be_armed && p.tp_hit === 0 && beAt < 0.5 && d > 0) {
+      const trigger = long ? p.entry + beAt * d : p.entry - beAt * d;
+      if (long ? price >= trigger : price <= trigger) {
+        db.prepare("UPDATE positions SET be_armed=1, sl_current=? WHERE id=?")
+          .run(p.entry, p.id);
+        p.be_armed = 1; p.sl_current = p.entry;
+        if (once(p.id, "info", "breakeven", "")) {
+          events++;
+          logEvent({ kind: "note", strategy: p.strategy, symbol: p.symbol,
+                     side: p.side, price, text: "стоп в безубытке" });
+          await notify(p.id,
+            `⚪️ <b>Стоп в безубытке</b> · ${fmtPrice(p.entry)}\n` +
+            `${p.symbol} ${long ? "LONG" : "SHORT"} · прошли ${beAt.toFixed(2)}R в свою сторону\n` +
+            `<i>Дальше сделка не может кончиться убытком.</i>`);
+        }
+      }
+    }
 
     // --- цели -------------------------------------------------------------
     let hit = p.tp_hit;
@@ -81,9 +105,9 @@ export async function monitorTick({ strategies, notify, focus }) {
            (long ? price >= targets[hit] : price <= targets[hit])) hit++;
 
     if (hit > p.tp_hit) {
-      const toBreakeven = p.tp_hit === 0;
-      const newSl = toBreakeven ? p.entry : p.sl_current;
-      db.prepare("UPDATE positions SET tp_hit=?, sl_current=? WHERE id=?")
+      const toBreakeven = p.tp_hit === 0 && !p.be_armed;
+      const newSl = toBreakeven || p.be_armed ? p.entry : p.sl_current;
+      db.prepare("UPDATE positions SET tp_hit=?, sl_current=?, be_armed=1 WHERE id=?")
         .run(hit, newSl, p.id);
       p.tp_hit = hit; p.sl_current = newSl;
 
@@ -114,7 +138,7 @@ export async function monitorTick({ strategies, notify, focus }) {
     // --- стоп -------------------------------------------------------------
     const sl = p.sl_current;
     if (long ? price <= sl : price >= sl) {
-      const be = p.tp_hit > 0;
+      const be = p.tp_hit > 0 || p.be_armed === 1;
       const r = closePosition(p, sl, "stop");
       await notify(p.id,
         `${be ? "⚪️" : "🔴"} <b>${be ? "Стоп в безубытке" : "Стоп"}</b> · ${fmtPrice(sl)}\n` +
