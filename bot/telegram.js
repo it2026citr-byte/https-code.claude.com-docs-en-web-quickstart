@@ -78,6 +78,16 @@ export async function broadcastDoc(path, caption = "") {
   for (const id of activeUsers()) await sendDoc(id, path, caption);
 }
 
+export async function editText(chatId, messageId, text, keyboard = null) {
+  const payload = {
+    chat_id: chatId, message_id: messageId, text, parse_mode: "HTML",
+    link_preview_options: { is_disabled: true },
+  };
+  if (keyboard) payload.reply_markup = { inline_keyboard: keyboard };
+  try { return await api("editMessageText", payload); }
+  catch (e) { log("правка не прошла:", e.message); return null; }
+}
+
 export async function answerCallback(id, text = "") {
   try { await api("answerCallbackQuery", { callback_query_id: id, text }); }
   catch { /* устаревшая кнопка — не беда */ }

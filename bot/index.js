@@ -1,20 +1,28 @@
 import { cfg, log } from "./config.js";
 import {
   db, now, getSetting, setSetting, upsertUser, openPositions,
-  getMode, setMode, MODE_SCAN, MODE_FOCUS,
+  getUser, setRole, listUsers, getMode, setMode, MODE_SCAN, MODE_FOCUS,
 } from "./db.js";
-import { api, send, sendLong, sendDoc, broadcast, broadcastDoc,
+import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
          answerCallback, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
 import { prices } from "./data/mexc.js";
+import { loadStrategies } from "./strategies/index.js";
+import { scanMarket } from "./engine.js";
 import { startLoops, startReports } from "./scheduler.js";
 import { fmtPrice, fmtPct, fmtUsd, fmtAgo, fmtTime } from "./format.js";
 import {
-  logEvent, monthKey, closedBetween, closedInMonth, digest, stats,
+  logEvent, monthKey, closedBetween, closedInMonth, digest, stats, signalCard,
   summaryLine, monthReport, exportMonthCsv, exportMonthLog, availableMonths,
 } from "./journal.js";
 
 const STARTED = now();
+let STRATEGIES = [];
+
+const TAKE_KB = (id) => [[
+  { text: "✅ Взял", callback_data: `take:${id}` },
+  { text: "🚫 Пропустил", callback_data: `skip:${id}` },
+]];
 
 // --- состояние рынка --------------------------------------------------------
 async function marketSnapshot() {
@@ -25,14 +33,23 @@ async function marketSnapshot() {
 }
 
 // --- такты ------------------------------------------------------------------
+async function onSignal(sig) {
+  await broadcast(signalCard(sig), TAKE_KB(sig.id));
+  log(`сигнал #${sig.id}: ${sig.side} ${sig.symbol} @ ${sig.entry}`);
+}
+
 async function scanTick() {
-  const top = await marketSnapshot();
-  log(`скан: ${top.length} пар в работе`);
-  if (getSetting("pulse", "1") === "1") {
-    const t = top.slice(0, 3)
-      .map(r => `${r.symbol.replace("USDT", "")} ${fmtPrice(r.close)} (${fmtPct(r.change)})`)
-      .join(" · ");
-    await broadcast(`📊 ${t}\n<i>вселенная ${top.length} пар · этап 1, стратегии подключаются следующим шагом</i>`);
+  const t0 = Date.now();
+  const r = await scanMarket(STRATEGIES, onSignal);
+  setSetting("last_market_seen", now());
+  setSetting("universe_size", r.pairs);
+  log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, выдано ${r.signals}, ` +
+      `${((Date.now() - t0) / 1000).toFixed(1)}с`);
+
+  if (getSetting("pulse", "0") === "1" && !r.signals) {
+    const top = await topPairs(3);
+    await broadcast(`📊 ${top.map(x => `${x.symbol.replace("USDT","")} ${fmtPrice(x.close)} (${fmtPct(x.change)})`).join(" · ")}` +
+      `\n<i>${r.pairs} пар · кандидатов ${r.candidates} · сигналов нет</i>`);
   }
 }
 
@@ -80,12 +97,14 @@ const HELP = `<b>Что я умею</b>
 /results — итоги закрытых сигналов за сегодня
 /log — итоги месяца плюс выгрузка файлами
 /stats — статистика за всё время
+/users — кто имеет доступ, выдать или отозвать
 /help — это сообщение
 
 <i>Telegram понимает только латиницу в командах, но я отзываюсь и на русские:
-/статус /фокус /скан /пульс /итоги /журнал /стата /помощь</i>
+/статус /фокус /скан /пульс /итоги /журнал /стата /доступ /помощь</i>
 
-<i>Скоро: сигналы по стратегиям, кнопка «Взял в работу», тревоги на выход.</i>`;
+<i>Сигналы приходят карточкой с кнопками «Взял» и «Пропустил».
+Скоро: тревоги на выход до стопа.</i>`;
 
 async function statusText() {
   const mode = getMode();
@@ -97,6 +116,7 @@ async function statusText() {
     `<b>Режим:</b> ${mode === MODE_FOCUS ? "🎯 фокус на сделках" : "🔍 скан рынка"}`,
     `<b>Рынок видел:</b> ${seen ? fmtAgo(now() - seen) + " назад" : "ещё нет"}`,
     `<b>Вселенная:</b> ${uni} пар MEXC/USDT дороже ${fmtUsd(cfg.minTurnoverUsd)} $ оборота`,
+    `<b>Стратегий:</b> ${STRATEGIES.length ? STRATEGIES.map(s => s.id).join(", ") : "нет"}`,
     `<b>Открытых сделок:</b> ${pos.length}`,
     `<b>Работаю без перерыва:</b> ${fmtAgo(now() - STARTED)}`,
   ];
@@ -109,19 +129,85 @@ async function statusText() {
   return lines.join("\n");
 }
 
+/**
+ * Закрытый доступ с заявками.
+ *
+ * Бот виден в поиске Telegram — спрятать его нельзя. Поэтому: владелец
+ * работает сразу, любой другой получает «приватный бот», а владельцу
+ * уходит заявка с кнопками. Без явного «Разрешить» чужой не увидит
+ * ни одного сигнала.
+ */
+function ownerId() {
+  const fromEnv = cfg.ownerId;
+  if (fromEnv) return fromEnv;
+  const stored = Number(getSetting("owner_id", "0"));
+  return stored || null;
+}
+
+const ACCESS_KB = (id) => [[
+  { text: "✅ Разрешить", callback_data: `grant:${id}` },
+  { text: "🚫 Отказать", callback_data: `deny:${id}` },
+]];
+
+/** true — можно работать; иначе всё уже обработано (отказ или заявка). */
+async function guard(msg, isStart) {
+  const chatId = msg.chat.id;
+  const o = ownerId();
+
+  // Первый /start закрепляет владельца, если он не задан в .env.
+  if (!o) {
+    if (!isStart) return false;
+    setSetting("owner_id", chatId);
+    upsertUser(chatId, msg.from?.username, msg.from?.first_name, "owner");
+    log(`владелец закреплён: ${chatId}`);
+    return true;
+  }
+  if (chatId === o) {
+    upsertUser(chatId, msg.from?.username, msg.from?.first_name, "owner");
+    setRole(chatId, "owner");
+    return true;
+  }
+
+  const u = getUser(chatId);
+  if (u?.role === "approved") return true;
+
+  if (u?.role === "denied") {
+    await send(chatId, "Этот бот приватный.");
+    return false;
+  }
+
+  if (u?.role === "pending") {                  // заявка уже висит
+    await send(chatId, "Запрос отправлен администратору. Ожидай решения.");
+    return false;
+  }
+
+  // Новая заявка — одна на человека, владельцу с кнопками.
+  upsertUser(chatId, msg.from?.username, msg.from?.first_name, "pending");
+  const who = msg.from?.username ? "@" + esc(msg.from.username) : esc(msg.from?.first_name || "без имени");
+  log(`заявка на доступ: ${chatId} ${who}`);
+  logEvent({ kind: "note", text: `заявка на доступ: ${chatId} ${who}` });
+  await send(o,
+    `🔐 <b>Запрос доступа</b>\n\n${who}\nid <code>${chatId}</code>\n\n` +
+    `<i>Без твоего разрешения он не получит ни одного сигнала.</i>`,
+    ACCESS_KB(chatId));
+  await send(chatId, "Запрос отправлен администратору. Ожидай решения.");
+  return false;
+}
+
 async function onMessage(msg) {
   const chatId = msg.chat.id;
   const text = msg.text.trim();
   const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
 
+  if (!await guard(msg, cmd === "/start")) return;
+
   if (cmd === "/start") {
-    upsertUser(chatId, msg.from?.username);
+    upsertUser(chatId, msg.from?.username, msg.from?.first_name,
+               chatId === ownerId() ? "owner" : "approved");
     await send(chatId,
       `Готов работать.\n\nЯ ищу точки входа по фьючерсам MEXC, показываю сигналы и слежу за теми, что ты взял в работу. Когда стратегия ломается — предупреждаю до стопа.\n\n${HELP}`);
     return;
   }
-  upsertUser(chatId, msg.from?.username);
-
   switch (cmd) {
     case "/help": case "/помощь":
       await send(chatId, HELP); break;
@@ -147,6 +233,23 @@ async function onMessage(msg) {
       await send(chatId, on ? "Пульс выключен." : "Пульс включён — сводка раз в 15 минут.");
       break;
     }
+    case "/users": case "/доступ": {
+      if (chatId !== ownerId()) { await send(chatId, "Команда только для администратора."); break; }
+      const us = listUsers();
+      if (us.length <= 1) { await send(chatId, "Кроме тебя доступ никто не запрашивал."); break; }
+      const RU = { owner: "владелец", approved: "допущен", pending: "ждёт решения", denied: "отказано" };
+      for (const u of us) {
+        if (u.chat_id === chatId) continue;
+        const who = u.username ? "@" + esc(u.username) : esc(u.first_name || "без имени");
+        const kb = u.role === "approved"
+          ? [[{ text: "🚫 Отозвать доступ", callback_data: `revoke:${u.chat_id}` }]]
+          : u.role === "pending" ? ACCESS_KB(u.chat_id)
+          : [[{ text: "✅ Разрешить", callback_data: `grant:${u.chat_id}` }]];
+        await send(chatId, `${who} · <code>${u.chat_id}</code>\n<b>${RU[u.role] ?? u.role}</b>`, kb);
+      }
+      break;
+    }
+
     case "/results": case "/итоги": {
       const rows = closedBetween(startOfDayUtc(), now());
       await sendLong(chatId, digest(rows, "Итоги за сегодня"));
@@ -197,13 +300,81 @@ async function onMessage(msg) {
 }
 
 async function onCallback(q) {
-  await answerCallback(q.id, "Кнопки заработают на следующем этапе");
+  const chatId = q.message?.chat?.id;
+  const [act0] = String(q.data || "").split(":");
+
+  // Решения по доступу принимает только владелец.
+  if (act0 === "grant" || act0 === "deny" || act0 === "revoke") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Не тебе решать"); return; }
+    const target = Number(String(q.data).split(":")[1]);
+    const u = getUser(target);
+    const who = u?.username ? "@" + esc(u.username) : esc(u?.first_name || String(target));
+    if (act0 === "grant") {
+      setRole(target, "approved");
+      logEvent({ kind: "note", text: `доступ разрешён: ${target}` });
+      await answerCallback(q.id, "Разрешено");
+      await editText(chatId, q.message.message_id,
+        `🔐 ${who} — <b>доступ разрешён</b>\n<i>id ${target}. Отозвать: /users</i>`);
+      await send(target, "Доступ открыт. Сигналы будут приходить сюда.\n\n/help — что я умею");
+    } else {
+      setRole(target, "denied");
+      logEvent({ kind: "note", text: `доступ отклонён: ${target}` });
+      await answerCallback(q.id, act0 === "deny" ? "Отказано" : "Отозвано");
+      await editText(chatId, q.message.message_id,
+        `🔐 ${who} — <b>доступ закрыт</b>\n<i>id ${target}</i>`);
+      if (act0 === "revoke") await send(target, "Доступ закрыт администратором.");
+    }
+    return;
+  }
+
+  const me = getUser(chatId);
+  if (chatId !== ownerId() && me?.role !== "approved") {
+    await answerCallback(q.id, "Приватный бот"); return;
+  }
+  const [action, idStr] = String(q.data || "").split(":");
+  const id = Number(idStr);
+  const sig = db.prepare("SELECT * FROM signals WHERE id = ?").get(id);
+
+  if (!sig) { await answerCallback(q.id, "Сигнал не найден"); return; }
+  if (sig.status !== "new") {
+    await answerCallback(q.id, sig.status === "taken" ? "Уже в работе" : "Уже пропущен");
+    return;
+  }
+
+  const view = signalCard({ ...sig, targets: JSON.parse(sig.targets) });
+
+  if (action === "skip") {
+    db.prepare("UPDATE signals SET status='skipped' WHERE id=?").run(id);
+    logEvent({ kind: "skipped", strategy: sig.strategy, symbol: sig.symbol,
+               side: sig.side, price: sig.entry });
+    await answerCallback(q.id, "Пропущен");
+    await editText(chatId, q.message.message_id, view + "\n\n🚫 <i>Пропущен</i>");
+    return;
+  }
+
+  if (action === "take") {
+    db.prepare(
+      "INSERT INTO positions(signal_id,chat_id,strategy,symbol,side,tf,entry,sl," +
+      "sl_current,targets,tp_hit,opened_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,'open')"
+    ).run(id, chatId, sig.strategy, sig.symbol, sig.side, sig.tf,
+          sig.entry, sig.sl, sig.sl, sig.targets, now());
+    db.prepare("UPDATE signals SET status='taken' WHERE id=?").run(id);
+    logEvent({ kind: "taken", strategy: sig.strategy, symbol: sig.symbol,
+               side: sig.side, price: sig.entry, text: "взят в работу" });
+    await answerCallback(q.id, "Взял в работу — слежу");
+    await editText(chatId, q.message.message_id,
+      view + "\n\n✅ <b>В работе.</b> <i>Слежу за целями, стопом и сломом стратегии.</i>");
+    return;
+  }
+
+  await answerCallback(q.id);
 }
 
 // --- запуск -----------------------------------------------------------------
 async function main() {
   const me = await api("getMe");
-  log(`бот @${me.username} на связи`);
+  const o = ownerId();
+  log(`бот @${me.username} на связи · админ: ${o ?? "будет закреплён первым /start"}`);
 
   // Честный доклад о простое: пока компьютер спал, рынок никто не смотрел.
   const seen = Number(getSetting("last_market_seen", "0"));
@@ -226,11 +397,13 @@ async function main() {
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },
     { command: "stats",  description: "статистика за всё время" },
+    { command: "users",  description: "кто имеет доступ (только админ)" },
     { command: "help",   description: "список команд" },
   ]});
 
+  STRATEGIES = await loadStrategies();
   await marketSnapshot().catch(e => log("первый скан не удался:", e.message));
-  logEvent({ kind: "note", text: "бот запущен" });
+  logEvent({ kind: "note", text: `бот запущен, стратегий ${STRATEGIES.length}` });
   startLoops({ scanTick, watchTick });
   startReports({ onDaily, onMonthly });
   await startPolling({ onMessage, onCallback });

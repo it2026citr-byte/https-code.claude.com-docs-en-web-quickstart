@@ -99,6 +99,21 @@ export function card(p) {
   ].join("\n");
 }
 
+const TF_RU = { "15m": "15м", "1h": "1ч", "4h": "4ч", "1d": "1д" };
+
+/** Карточка нового сигнала — то, на что жмут «Взял» или «Пропустил». */
+export function signalCard(s) {
+  const long = s.side === "long";
+  const pct = Math.abs(s.sl - s.entry) / s.entry * 100;
+  return [
+    `${long ? "📈" : "📉"} <b>${long ? "LONG" : "SHORT"}</b> ${s.symbol}   ` +
+      `<i>${s.strategy} · ${TF_RU[s.tf] ?? s.tf}</i>`,
+    `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)`,
+    `Цели ${s.targets.map(fmtPrice).join(" · ")}`,
+    `<i>${s.reason}</i>`,
+  ].join("\n");
+}
+
 export function digest(rows, title) {
   if (!rows.length) return `<b>${title}</b>\n\nЗакрытых сигналов нет.`;
   const newestFirst = [...rows].sort((a, b) => b.closed_at - a.closed_at);

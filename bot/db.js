@@ -97,6 +97,17 @@ CREATE TABLE IF NOT EXISTS candles (
 );
 `);
 
+// Миграция: у ранних баз нет колонок доступа.
+{
+  const cols = db.prepare("PRAGMA table_info(users)").all().map(r => r.name);
+  if (!cols.includes("role"))
+    db.exec("ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'pending'");
+  if (!cols.includes("requested_at"))
+    db.exec("ALTER TABLE users ADD COLUMN requested_at INTEGER");
+  if (!cols.includes("first_name"))
+    db.exec("ALTER TABLE users ADD COLUMN first_name TEXT");
+}
+
 const _get = db.prepare("SELECT value FROM settings WHERE key = ?");
 const _set = db.prepare(
   "INSERT INTO settings(key, value) VALUES(?, ?) " +
@@ -120,15 +131,29 @@ export function setJSON(key, value) { setSetting(key, JSON.stringify(value)); }
 export const now = () => Math.floor(Date.now() / 1000);
 
 // --- пользователи -----------------------------------------------------------
-export function upsertUser(chatId, username) {
+export function upsertUser(chatId, username, firstName, role = null) {
   db.prepare(
-    "INSERT INTO users(chat_id, username, joined_at, active) VALUES(?,?,?,1) " +
-    "ON CONFLICT(chat_id) DO UPDATE SET username = excluded.username, active = 1"
-  ).run(chatId, username || "", now());
+    "INSERT INTO users(chat_id, username, first_name, joined_at, active, role, requested_at) " +
+    "VALUES(?,?,?,?,1,?,?) " +
+    "ON CONFLICT(chat_id) DO UPDATE SET username = excluded.username, " +
+    "first_name = excluded.first_name, active = 1"
+  ).run(chatId, username || "", firstName || "", now(), role || "pending", now());
 }
+
+export const getUser = (chatId) =>
+  db.prepare("SELECT * FROM users WHERE chat_id = ?").get(chatId);
+
+export const setRole = (chatId, role) =>
+  db.prepare("UPDATE users SET role = ? WHERE chat_id = ?").run(role, chatId);
+
+export const listUsers = () =>
+  db.prepare("SELECT * FROM users ORDER BY joined_at").all();
+
+/** Кому уходят сигналы: владелец и все, кого он допустил. */
 export function activeUsers() {
-  return db.prepare("SELECT chat_id FROM users WHERE active = 1").all()
-           .map(r => r.chat_id);
+  return db.prepare(
+    "SELECT chat_id FROM users WHERE active = 1 AND role IN ('owner','approved')"
+  ).all().map(r => r.chat_id);
 }
 
 // --- режим ------------------------------------------------------------------

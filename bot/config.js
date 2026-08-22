@@ -23,6 +23,9 @@ mkdirSync(join(ROOT, "storage"), { recursive: true });
 export const cfg = {
   token: process.env.TELEGRAM_TOKEN || "",
   anthropicKey: process.env.ANTHROPIC_API_KEY || "",
+  // Закрытый доступ: бот отвечает только этому Telegram-id.
+  // Пусто — владельцем станет тот, кто первым напишет /start.
+  ownerId: Number(process.env.OWNER_ID || 0) || null,
   dbPath: join(ROOT, "storage", "bot.db"),
 
   scanIntervalMin: 15,      // как часто ищем новые монеты
@@ -32,6 +35,9 @@ export const cfg = {
   topByTurnover: 80,       // сколько пар берём в работу по обороту
   minTurnoverUsd: 1_000_000,   // ниже — на фьючерсах съедает проскальзывание
 
+  // 0 — без ограничения: сигналов ровно столько, сколько даёт стратегия.
+  // Ненулевое значение — аварийный тормоз, не инструмент отбора.
+  maxSignalsPerScan: 0,
   reportHourUtc: 20,        // час UTC для дневной сводки и месячного итога
 
   riskPct: 1,               // риск на сделку, % депозита
