@@ -1,0 +1,250 @@
+//@version=6
+// ═══════════════════════════════════════════════════════════════════════════
+// Golden Reverse — стратегия, собранная из разобранных сигналов Crypto Signals Golden
+// (415 сигналов, 44 пары, 8 июля — 22 августа 2026)
+//
+// ВЫХОДЫ — восстановлены из их данных:
+//   • Лесенка целей T(n) = вход ± 0.5·n × расстояние_до_стопа, n = 1..5
+//     Проверено на 100% сигналов с раскрытыми целями (23 из 23).
+//   • Стоп адаптивный: ≈ 1.5 × ATR(1ч) ≈ 0.35 × ATR(день). Часто стоит около
+//     свингового экстремума 15м/1ч (совпадение вдвое выше случайного),
+//     поэтому режим "Гибрид" берёт максимум из ATR и структуры.
+//   • Горизонт внутридневной: медиана удержания 2.5 часа.
+//
+// ВХОДЫ — НАШИ, не их. Правило входа Golden восстановить не удалось: ни ATR,
+//   ни структурный стоп не дали чистого правила, а для дальнейшего анализа
+//   нужны точные времена ОТКРЫТИЯ сигналов, которых в приложении не видно.
+//   Здесь работает наш движок: UT Bot + CCI + Squeeze Momentum + SMC.
+//
+// РИСК — сознательно изменён. У Golden стоп стоит ровно 30% маржи; при их же
+//   доле стопов 27% серия из четырёх подряд статистически неизбежна и уносит
+//   76% счёта. Здесь размер позиции считается от риска в % на сделку (по умолчанию 1%).
+// ═══════════════════════════════════════════════════════════════════════════
+strategy("Golden Reverse: адаптивный стоп + лесенка целей", overlay = true,
+     initial_capital = 10000,
+     default_qty_type = strategy.fixed, default_qty_value = 1,
+     commission_type = strategy.commission.percent, commission_value = 0.05,
+     calc_on_order_fills = false, max_labels_count = 500)
+
+// ───────────────────────── РИСК И РАЗМЕР ПОЗИЦИИ ─────────────────────────
+gR = "Риск"
+riskPct   = input.float(1.0, "Риск на сделку, % депозита", minval = 0.05, maxval = 50, step = 0.05, group = gR,
+     tooltip = "У Golden здесь стоит 30%. Это и есть причина сливов: при 27% стопов четыре подряд убирают 76% счёта.")
+maxLev    = input.float(10.0, "Ограничение плеча", minval = 1, maxval = 125, step = 1, group = gR,
+     tooltip = "Верхняя граница на размер позиции относительно депозита.")
+
+// ───────────────────────── СТОП (их геометрия) ─────────────────────────
+gS = "Стоп"
+stopMode  = input.string("Гибрид (макс из двух)", "Как считать стоп",
+     options = ["ATR", "Структура (свинг)", "Гибрид (макс из двух)"], group = gS)
+atrLen    = input.int(14,   "ATR период",            minval = 2,  group = gS)
+atrMult   = input.float(1.5,"ATR множитель",         minval = 0.1, step = 0.1, group = gS,
+     tooltip = "1.5 на часовом графике воспроизводит их медианный стоп.")
+swingLen  = input.int(10,   "Свинг: длина поиска",   minval = 2,  group = gS,
+     tooltip = "Экстремум последних N свечей; стоп ставится за него.")
+swingPad  = input.float(0.1,"Отступ за экстремум, ATR ×", minval = 0, step = 0.05, group = gS)
+
+// ───────────────────────── ЦЕЛИ (их формула) ─────────────────────────
+gT = "Цели"
+tpStep    = input.float(0.5, "Шаг лесенки, × стоп", minval = 0.1, step = 0.1, group = gT,
+     tooltip = "T(n) = вход ± шаг·n × расстояние до стопа. У Golden шаг ровно 0.5.")
+q1 = input.float(20, "Доля выхода на T1, %", minval = 0, maxval = 100, step = 5, group = gT)
+q2 = input.float(20, "Доля выхода на T2, %", minval = 0, maxval = 100, step = 5, group = gT)
+q3 = input.float(20, "Доля выхода на T3, %", minval = 0, maxval = 100, step = 5, group = gT)
+q4 = input.float(20, "Доля выхода на T4, %", minval = 0, maxval = 100, step = 5, group = gT)
+//            остаток уходит на T5
+beAfter   = input.int(2, "Перевод в безубыток после цели №", minval = 0, maxval = 5, group = gT,
+     tooltip = "0 — не переводить. Их отзывы описывают именно такое поведение.")
+useTrail  = input.bool(false, "Трейлинг остатка после безубытка", group = gT)
+trailMult = input.float(2.0,  "Трейлинг, ATR ×", minval = 0.5, step = 0.1, group = gT)
+
+// ───────────────────────── ВХОДЫ (наш движок) ─────────────────────────
+gE = "Входы: UT Bot"
+utKey       = input.float(1.0,  "Key Value (чувствительность)", minval = 0.1, step = 0.1, group = gE)
+utAtrPeriod = input.int(10,     "UT Bot: ATR период",           minval = 1,   group = gE)
+useHeikin   = input.bool(false, "Сигналы по Heikin Ashi",                     group = gE)
+
+gF = "Входы: фильтры"
+useCci    = input.bool(true,  "CCI-фильтр (импульс)",              group = gF)
+cciLen    = input.int(20,     "CCI период",                        group = gF)
+useSqz    = input.bool(true,  "Squeeze Momentum (направление)",    group = gF)
+bbLen     = input.int(20,     "BB/KC период",                      group = gF)
+bbMult    = input.float(2.0,  "BB множитель", step = 0.1,          group = gF)
+kcMult    = input.float(1.5,  "KC множитель", step = 0.1,          group = gF)
+useSmc    = input.bool(true,  "SMC: структура рынка",              group = gF)
+smcLen    = input.int(5,      "SMC: длина свинга", minval = 2,     group = gF)
+
+enableLong  = input.bool(true, "Лонги",  group = "Направления")
+enableShort = input.bool(true, "Шорты",  group = "Направления")
+
+// ═══════════════════════════ РАСЧЁТЫ ═══════════════════════════
+atrVal = ta.atr(atrLen)
+
+// --- UT Bot ---
+src    = useHeikin ? request.security(ticker.heikinashi(syminfo.tickerid), timeframe.period, close, lookahead = barmerge.lookahead_off) : close
+nLoss  = utKey * ta.atr(utAtrPeriod)
+var float utStop = na
+utStop := src > nz(utStop[1]) and src[1] > nz(utStop[1]) ? math.max(nz(utStop[1]), src - nLoss) :
+     src < nz(utStop[1]) and src[1] < nz(utStop[1]) ? math.min(nz(utStop[1]), src + nLoss) :
+     src > nz(utStop[1]) ? src - nLoss : src + nLoss
+ema1   = ta.ema(src, 1)
+utBuy  = src > utStop and ta.crossover(ema1, utStop)
+utSell = src < utStop and ta.crossunder(ema1, utStop)
+
+// --- CCI ---
+cci = ta.cci(hlc3, cciLen)
+cciLongOk  = not useCci or cci > 0
+cciShortOk = not useCci or cci < 0
+
+// --- Squeeze Momentum (LazyBear) ---
+sqzVal = ta.linreg(close - math.avg(math.avg(ta.highest(high, bbLen), ta.lowest(low, bbLen)), ta.sma(close, bbLen)), bbLen, 0)
+basis   = ta.sma(close, bbLen)
+dev     = bbMult * ta.stdev(close, bbLen)
+rngMa   = ta.sma(ta.tr, bbLen)
+sqzOn   = (basis - dev) > (ta.sma(close, bbLen) - rngMa * kcMult) and (basis + dev) < (ta.sma(close, bbLen) + rngMa * kcMult)
+sqzLongOk  = not useSqz or sqzVal > 0
+sqzShortOk = not useSqz or sqzVal < 0
+
+// --- SMC: структура (leg-детектор LuxAlgo) ---
+f_leg(int size) =>
+    var int leg = 0
+    if high[size] > ta.highest(high, size)
+        leg := -1
+    else if low[size] < ta.lowest(low, size)
+        leg := 1
+    leg
+iLeg = f_leg(smcLen)
+var float iPH  = na
+var float iPL  = na
+var bool  iPHx = true
+var bool  iPLx = true
+var int   iTrend = 0
+if ta.change(iLeg) != 0 and iLeg == -1
+    iPH  := high[smcLen]
+    iPHx := false
+if ta.change(iLeg) != 0 and iLeg == 1
+    iPL  := low[smcLen]
+    iPLx := false
+if not iPHx and ta.crossover(close, iPH)
+    iTrend := 1
+    iPHx   := true
+if not iPLx and ta.crossunder(close, iPL)
+    iTrend := -1
+    iPLx   := true
+smcLongOk  = not useSmc or iTrend >= 0
+smcShortOk = not useSmc or iTrend <= 0
+
+longSignal  = utBuy  and cciLongOk  and sqzLongOk  and smcLongOk  and enableLong
+shortSignal = utSell and cciShortOk and sqzShortOk and smcShortOk and enableShort
+
+// ─────────────── СТОП: ATR / структура / гибрид (геометрия Golden) ───────────────
+swingLow  = ta.lowest(low,  swingLen)
+swingHigh = ta.highest(high, swingLen)
+f_stopDist(bool isLong) =>
+    dAtr = atrMult * atrVal
+    dStr = isLong ? (close - swingLow + swingPad * atrVal) : (swingHigh - close + swingPad * atrVal)
+    dStr := math.max(dStr, syminfo.mintick * 10)
+    stopMode == "ATR" ? dAtr : stopMode == "Структура (свинг)" ? dStr : math.max(dAtr, dStr)
+
+// ─────────────── СОСТОЯНИЕ ПОЗИЦИИ ───────────────
+var float entryPx   = na
+var float stopPx    = na
+var float stopDist  = na
+var float origQty   = na
+var int   tpHit     = 0
+var bool  isLongPos = true
+
+f_tp(int n) => isLongPos ? entryPx + tpStep * n * stopDist : entryPx - tpStep * n * stopDist
+
+// ─────────────── ВХОД ───────────────
+if longSignal and strategy.position_size == 0
+    d   = f_stopDist(true)
+    qty = math.min((strategy.equity * riskPct / 100) / d, strategy.equity * maxLev / close)
+    if qty > 0
+        entryPx   := close
+        stopDist  := d
+        stopPx    := close - d
+        tpHit     := 0
+        isLongPos := true
+        origQty   := qty
+        strategy.entry("L", strategy.long, qty = qty)
+
+if shortSignal and strategy.position_size == 0
+    d   = f_stopDist(false)
+    qty = math.min((strategy.equity * riskPct / 100) / d, strategy.equity * maxLev / close)
+    if qty > 0
+        entryPx   := close
+        stopDist  := d
+        stopPx    := close + d
+        tpHit     := 0
+        isLongPos := false
+        origQty   := qty
+        strategy.entry("S", strategy.short, qty = qty)
+
+// ─────────────── СОПРОВОЖДЕНИЕ ───────────────
+if strategy.position_size != 0 and not na(entryPx)
+    // сколько целей уже пройдено
+    reached = 0
+    for n = 1 to 5
+        lvl = f_tp(n)
+        if (isLongPos and high >= lvl) or (not isLongPos and low <= lvl)
+            reached := n
+    tpHit := math.max(tpHit, reached)
+
+    // безубыток
+    if beAfter > 0 and tpHit >= beAfter
+        stopPx := isLongPos ? math.max(stopPx, entryPx) : math.min(stopPx, entryPx)
+    // трейлинг остатка
+    if useTrail and beAfter > 0 and tpHit >= beAfter
+        tr = isLongPos ? close - trailMult * atrVal : close + trailMult * atrVal
+        stopPx := isLongPos ? math.max(stopPx, tr) : math.min(stopPx, tr)
+
+    ent = isLongPos ? "L" : "S"
+    // доля оставшейся позиции от исходной — чтобы qty_percent резал от ИСХОДНОГО объёма
+    curFrac = na(origQty) or origQty <= 0 ? 1.0 : math.abs(strategy.position_size) / origQty
+    p1 = curFrac <= 0 ? 100.0 : math.min(100.0, q1 / curFrac)
+    p2 = curFrac <= 0 ? 100.0 : math.min(100.0, q2 / curFrac)
+    p3 = curFrac <= 0 ? 100.0 : math.min(100.0, q3 / curFrac)
+    p4 = curFrac <= 0 ? 100.0 : math.min(100.0, q4 / curFrac)
+
+    // выставляем только ещё не достигнутые цели; стоп общий для всех оставшихся частей
+    if tpHit < 1
+        strategy.exit("T1", ent, qty_percent = p1, limit = f_tp(1), stop = stopPx)
+    if tpHit < 2
+        strategy.exit("T2", ent, qty_percent = p2, limit = f_tp(2), stop = stopPx)
+    if tpHit < 3
+        strategy.exit("T3", ent, qty_percent = p3, limit = f_tp(3), stop = stopPx)
+    if tpHit < 4
+        strategy.exit("T4", ent, qty_percent = p4, limit = f_tp(4), stop = stopPx)
+    if tpHit < 5
+        strategy.exit("T5", ent, limit = f_tp(5), stop = stopPx)
+    // страховочный стоп на остаток, если все цели уже взяты частями
+    if tpHit >= 5
+        strategy.exit("SLrest", ent, stop = stopPx)
+
+if strategy.position_size == 0
+    entryPx  := na
+    stopPx   := na
+    stopDist := na
+    origQty  := na
+    tpHit    := 0
+
+// ─────────────── ВИЗУАЛИЗАЦИЯ ───────────────
+inPos = strategy.position_size != 0
+plot(inPos ? stopPx  : na, "Стоп",  color = color.new(color.red, 0),   style = plot.style_linebr, linewidth = 2)
+plot(inPos ? f_tp(1) : na, "T1",    color = color.new(color.teal, 55), style = plot.style_linebr)
+plot(inPos ? f_tp(2) : na, "T2",    color = color.new(color.teal, 45), style = plot.style_linebr)
+plot(inPos ? f_tp(3) : na, "T3",    color = color.new(color.teal, 35), style = plot.style_linebr)
+plot(inPos ? f_tp(4) : na, "T4",    color = color.new(color.teal, 25), style = plot.style_linebr)
+plot(inPos ? f_tp(5) : na, "T5",    color = color.new(color.teal, 0),  style = plot.style_linebr, linewidth = 2)
+plot(inPos ? entryPx : na, "Вход",  color = color.new(color.gray, 30), style = plot.style_linebr)
+
+plotshape(longSignal  and strategy.position_size == 0, "Buy",  style = shape.labelup,   location = location.belowbar,
+     color = color.green, text = "BUY",  textcolor = color.white, size = size.tiny)
+plotshape(shortSignal and strategy.position_size == 0, "Sell", style = shape.labeldown, location = location.abovebar,
+     color = color.red,   text = "SELL", textcolor = color.white, size = size.tiny)
+bgcolor(sqzOn ? color.new(color.orange, 90) : na, title = "Сквиз")
+
+// ─────────────── АЛЕРТЫ ───────────────
+alertcondition(longSignal,  "Golden Reverse LONG",  "LONG: вход {{close}}")
+alertcondition(shortSignal, "Golden Reverse SHORT", "SHORT: вход {{close}}")
