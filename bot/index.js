@@ -3,11 +3,16 @@ import {
   db, now, getSetting, setSetting, upsertUser, openPositions,
   getMode, setMode, MODE_SCAN, MODE_FOCUS,
 } from "./db.js";
-import { api, send, broadcast, answerCallback, startPolling, esc } from "./telegram.js";
+import { api, send, sendLong, sendDoc, broadcast, broadcastDoc,
+         answerCallback, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
 import { prices } from "./data/mexc.js";
-import { startLoops } from "./scheduler.js";
+import { startLoops, startReports } from "./scheduler.js";
 import { fmtPrice, fmtPct, fmtUsd, fmtAgo, fmtTime } from "./format.js";
+import {
+  logEvent, monthKey, closedBetween, closedInMonth, digest, stats,
+  summaryLine, monthReport, exportMonthCsv, exportMonthLog, availableMonths,
+} from "./journal.js";
 
 const STARTED = now();
 
@@ -40,6 +45,29 @@ async function watchTick({ focus }) {
   // Проверка целей, стопа и нарушения стратегии — этап 3.
 }
 
+// --- отчёты -----------------------------------------------------------------
+const startOfDayUtc = (ts = now()) =>
+  Math.floor(Date.parse(new Date(ts * 1000).toISOString().slice(0, 10)) / 1000);
+
+async function onDaily(day) {
+  const rows = closedBetween(startOfDayUtc(), now());
+  if (!rows.length) return;                 // молчим, когда закрывать было нечего
+  await broadcast(digest(rows, `Итоги дня ${day}`));
+  log(`дневная сводка: ${rows.length} закрытых`);
+}
+
+async function onMonthly(m) {
+  await broadcast(monthReport(m));
+  const csv = exportMonthCsv(m);
+  const lg = exportMonthLog(m);
+  if (csv.count) {
+    await broadcastDoc(csv.path,
+      `<b>${m}</b> — ${csv.count} сделок. Колонки как в базе Golden, можно подклеивать.`);
+    await broadcastDoc(lg.path, `Полная лента событий за ${m}: ${lg.count} записей.`);
+  }
+  log(`месячный итог ${m}: ${csv.count} сделок`);
+}
+
 // --- команды ----------------------------------------------------------------
 const HELP = `<b>Что я умею</b>
 
@@ -47,10 +75,15 @@ const HELP = `<b>Что я умею</b>
 /focus — бросить всё и следить только за взятыми сделками
 /scan — вернуться к поиску новых монет
 /pulse — включить/выключить сводку раз в 15 минут
+
+<b>Журнал</b>
+/results — итоги закрытых сигналов за сегодня
+/log — итоги месяца плюс выгрузка файлами
+/stats — статистика за всё время
 /help — это сообщение
 
 <i>Telegram понимает только латиницу в командах, но я отзываюсь и на русские:
-/статус /фокус /скан /пульс /помощь</i>
+/статус /фокус /скан /пульс /итоги /журнал /стата /помощь</i>
 
 <i>Скоро: сигналы по стратегиям, кнопка «Взял в работу», тревоги на выход.</i>`;
 
@@ -114,6 +147,50 @@ async function onMessage(msg) {
       await send(chatId, on ? "Пульс выключен." : "Пульс включён — сводка раз в 15 минут.");
       break;
     }
+    case "/results": case "/итоги": {
+      const rows = closedBetween(startOfDayUtc(), now());
+      await sendLong(chatId, digest(rows, "Итоги за сегодня"));
+      break;
+    }
+
+    case "/log": case "/журнал": {
+      const arg = text.split(/\s+/)[1];
+      const m = /^\d{4}-\d{2}$/.test(arg || "") ? arg : monthKey();
+      await sendLong(chatId, monthReport(m));
+      const csv = exportMonthCsv(m);
+      if (csv.count) {
+        await sendDoc(chatId, csv.path,
+          `<b>${m}</b> — ${csv.count} сделок. Колонки как в базе Golden.`);
+        const lg = exportMonthLog(m);
+        await sendDoc(chatId, lg.path, `Лента событий: ${lg.count} записей.`);
+      }
+      const have = availableMonths();
+      if (have.length > 1)
+        await send(chatId, `Есть месяцы: ${have.join(" · ")}\nДругой: <code>/log 2026-07</code>`);
+      break;
+    }
+
+    case "/stats": case "/стата": {
+      const months = availableMonths();
+      if (!months.length) { await send(chatId, "Журнал пока пуст."); break; }
+      const all = months.flatMap(m => closedInMonth(m));
+      const s = stats(all);
+      const byM = months.map(m => {
+        const st = stats(closedInMonth(m));
+        return st.done
+          ? `${m}: ${st.done} · ${(st.winrate*100).toFixed(0)}% · ${st.sumR>0?"+":""}${st.sumR.toFixed(2)}R`
+          : `${m}: пусто`;
+      });
+      const strat = Object.entries(s.byStrategy).sort((a,b)=>b[1].r-a[1].r)
+        .map(([k,v]) => `• ${k}: ${v.n} · ${(v.wins/v.n*100).toFixed(0)}% · ${v.r>0?"+":""}${v.r.toFixed(2)}R`);
+      await sendLong(chatId, [
+        "<b>За всё время</b>", "", summaryLine(s), "",
+        "<b>По месяцам</b>", ...byM,
+        ...(strat.length ? ["", "<b>По стратегиям</b>", ...strat] : []),
+      ].join("\n"));
+      break;
+    }
+
     default:
       await send(chatId, "Не знаю такой команды. /помощь");
   }
@@ -146,11 +223,16 @@ async function main() {
     { command: "focus",  description: "следить только за взятыми сделками" },
     { command: "scan",   description: "искать новые точки входа" },
     { command: "pulse",  description: "сводка раз в 15 минут" },
+    { command: "results", description: "итоги сигналов за сегодня" },
+    { command: "log",    description: "итоги месяца и выгрузка файлами" },
+    { command: "stats",  description: "статистика за всё время" },
     { command: "help",   description: "список команд" },
   ]});
 
   await marketSnapshot().catch(e => log("первый скан не удался:", e.message));
+  logEvent({ kind: "note", text: "бот запущен" });
   startLoops({ scanTick, watchTick });
+  startReports({ onDaily, onMonthly });
   await startPolling({ onMessage, onCallback });
 }
 

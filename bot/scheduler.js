@@ -1,5 +1,5 @@
 import { cfg, log } from "./config.js";
-import { getMode, MODE_FOCUS, openPositions } from "./db.js";
+import { getMode, MODE_FOCUS, openPositions, getSetting, setSetting } from "./db.js";
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -41,6 +41,38 @@ export function startLoops({ scanTick, watchTick }) {
 
       await sleep(focus ? cfg.focusIntervalSec * 1000
                         : msToNextBoundary(cfg.normalWatchMin));
+    }
+  })();
+}
+
+/**
+ * Отчёты. Проверяем раз в минуту, не пора ли — так переживаем выключение
+ * компьютера: если срок настал, пока машина спала, отчёт уйдёт при запуске.
+ */
+export function startReports({ onDaily, onMonthly }) {
+  (async function reportLoop() {
+    for (;;) {
+      try {
+        const d = new Date();
+        const day = d.toISOString().slice(0, 10);
+        const month = d.toISOString().slice(0, 7);
+        const past = d.getUTCHours() >= cfg.reportHourUtc;
+
+        // Дневная сводка за сегодня — после назначенного часа, один раз в день.
+        if (past && getSetting("last_daily") !== day) {
+          setSetting("last_daily", day);
+          await onDaily(day);
+        }
+
+        // Месячный итог — первого числа, за прошлый месяц.
+        const prev = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))
+          .toISOString().slice(0, 7);
+        if (d.getUTCDate() === 1 && past && getSetting("last_monthly") !== month) {
+          setSetting("last_monthly", month);
+          await onMonthly(prev);
+        }
+      } catch (e) { log("отчёт не собрался:", e.message); }
+      await sleep(60_000);
     }
   })();
 }

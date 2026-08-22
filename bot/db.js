@@ -70,6 +70,23 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE UNIQUE INDEX IF NOT EXISTS alerts_uniq
   ON alerts(position_id, level, reason);
 
+-- Журнал: append-only лента всего, что произошло. Основа месячных отчётов.
+CREATE TABLE IF NOT EXISTS journal (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts         INTEGER NOT NULL,
+  month      TEXT NOT NULL,          -- '2026-08'
+  kind       TEXT NOT NULL,          -- signal|taken|skipped|target|stop|broken|closed|note
+  strategy   TEXT,
+  symbol     TEXT,
+  side       TEXT,
+  price      REAL,
+  r_value    REAL,
+  text       TEXT,
+  detail     TEXT                    -- JSON, свободные поля
+);
+CREATE INDEX IF NOT EXISTS journal_month ON journal(month, ts);
+CREATE INDEX IF NOT EXISTS journal_ts ON journal(ts);
+
 -- Кеш свечей, чтобы не дёргать биржу лишний раз.
 CREATE TABLE IF NOT EXISTS candles (
   symbol    TEXT NOT NULL,

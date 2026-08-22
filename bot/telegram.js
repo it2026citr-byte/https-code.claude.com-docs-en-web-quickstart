@@ -33,8 +33,49 @@ export async function send(chatId, text, keyboard = null) {
   }
 }
 
+/** Telegram режет сообщения на 4096 символах — бьём по карточкам. */
+export async function sendLong(chatId, text, keyboard = null) {
+  const LIMIT = 3800;
+  if (text.length <= LIMIT) return send(chatId, text, keyboard);
+  const parts = [];
+  let buf = "";
+  for (const block of text.split("\n\n")) {
+    if ((buf + "\n\n" + block).length > LIMIT && buf) { parts.push(buf); buf = block; }
+    else buf = buf ? buf + "\n\n" + block : block;
+  }
+  if (buf) parts.push(buf);
+  let last = null;
+  for (let i = 0; i < parts.length; i++)
+    last = await send(chatId, parts[i], i === parts.length - 1 ? keyboard : null);
+  return last;
+}
+
+/** Отправка файла — месячные выгрузки. */
+export async function sendDoc(chatId, path, caption = "") {
+  const { readFile } = await import("node:fs/promises");
+  const { basename } = await import("node:path");
+  try {
+    const buf = await readFile(path);
+    const fd = new FormData();
+    fd.append("chat_id", String(chatId));
+    if (caption) { fd.append("caption", caption); fd.append("parse_mode", "HTML"); }
+    fd.append("document", new Blob([buf]), basename(path));
+    const res = await fetch(`${API}/sendDocument`, { method: "POST", body: fd });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.description);
+    return j.result;
+  } catch (e) {
+    log("файл не ушёл:", e.message);
+    return null;
+  }
+}
+
 export async function broadcast(text, keyboard = null) {
-  for (const id of activeUsers()) await send(id, text, keyboard);
+  for (const id of activeUsers()) await sendLong(id, text, keyboard);
+}
+
+export async function broadcastDoc(path, caption = "") {
+  for (const id of activeUsers()) await sendDoc(id, path, caption);
 }
 
 export async function answerCallback(id, text = "") {
