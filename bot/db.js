@@ -108,6 +108,14 @@ CREATE TABLE IF NOT EXISTS candles (
     db.exec("ALTER TABLE users ADD COLUMN first_name TEXT");
 }
 
+{
+  const cols = db.prepare("PRAGMA table_info(positions)").all().map(r => r.name);
+  // id карточки сигнала: вся история по сделке уходит ответами на неё,
+  // чтобы в чате получалась нитка, а не россыпь сообщений.
+  if (!cols.includes("msg_id"))
+    db.exec("ALTER TABLE positions ADD COLUMN msg_id INTEGER");
+}
+
 const _get = db.prepare("SELECT value FROM settings WHERE key = ?");
 const _set = db.prepare(
   "INSERT INTO settings(key, value) VALUES(?, ?) " +

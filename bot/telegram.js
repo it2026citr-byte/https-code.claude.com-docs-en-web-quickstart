@@ -17,7 +17,7 @@ export async function api(method, payload = {}) {
 export const esc = (s) => String(s)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-export async function send(chatId, text, keyboard = null) {
+export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
     chat_id: chatId,
     text,
@@ -25,9 +25,15 @@ export async function send(chatId, text, keyboard = null) {
     link_preview_options: { is_disabled: true },
   };
   if (keyboard) payload.reply_markup = { inline_keyboard: keyboard };
+  if (replyTo) payload.reply_parameters = { message_id: replyTo, allow_sending_without_reply: true };
   try {
     return await api("sendMessage", payload);
   } catch (e) {
+    // Карточку могли удалить — тогда шлём обычным сообщением, а не теряем событие.
+    if (replyTo) {
+      log("ответ на", replyTo, "не прошёл, шлю отдельно:", e.message);
+      return send(chatId, text, keyboard, null);
+    }
     log("не отправилось в", chatId, "—", e.message);
     return null;
   }

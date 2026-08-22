@@ -13,6 +13,7 @@ import { startLoops, startReports } from "./scheduler.js";
 import { fmtPrice, fmtPct, fmtUsd, fmtAgo, fmtTime } from "./format.js";
 import {
   logEvent, monthKey, closedBetween, closedInMonth, digest, stats, signalCard,
+  goldenTime,
   summaryLine, monthReport, exportMonthCsv, exportMonthLog, availableMonths,
 } from "./journal.js";
 
@@ -60,6 +61,16 @@ async function watchTick({ focus }) {
   setSetting("last_market_seen", now());
   log(`присмотр${focus ? " (фокус)" : ""}: ${pos.length} позиций, цены получены по ${Object.keys(px).length}`);
   // Проверка целей, стопа и нарушения стратегии — этап 3.
+}
+
+/**
+ * Событие по сделке — ответом на карточку сигнала. Так в чате
+ * складывается нитка по каждой позиции, а не лента вперемешку.
+ */
+export async function postUpdate(positionId, text, keyboard = null) {
+  const p = db.prepare("SELECT * FROM positions WHERE id = ?").get(positionId);
+  if (!p) return null;
+  return send(p.chat_id, text, keyboard, p.msg_id || null);
 }
 
 // --- отчёты -----------------------------------------------------------------
@@ -353,17 +364,27 @@ async function onCallback(q) {
   }
 
   if (action === "take") {
-    db.prepare(
+    const t = now();
+    const r = db.prepare(
       "INSERT INTO positions(signal_id,chat_id,strategy,symbol,side,tf,entry,sl," +
-      "sl_current,targets,tp_hit,opened_at,status) VALUES(?,?,?,?,?,?,?,?,?,?,0,?,'open')"
+      "sl_current,targets,tp_hit,opened_at,status,msg_id) " +
+      "VALUES(?,?,?,?,?,?,?,?,?,?,0,?,'open',?)"
     ).run(id, chatId, sig.strategy, sig.symbol, sig.side, sig.tf,
-          sig.entry, sig.sl, sig.sl, sig.targets, now());
+          sig.entry, sig.sl, sig.sl, sig.targets, t, q.message.message_id);
+    const posId = Number(r.lastInsertRowid);
+
     db.prepare("UPDATE signals SET status='taken' WHERE id=?").run(id);
     logEvent({ kind: "taken", strategy: sig.strategy, symbol: sig.symbol,
                side: sig.side, price: sig.entry, text: "взят в работу" });
     await answerCallback(q.id, "Взял в работу — слежу");
     await editText(chatId, q.message.message_id,
-      view + "\n\n✅ <b>В работе.</b> <i>Слежу за целями, стопом и сломом стратегии.</i>");
+      view + "\n\n✅ <b>В работе</b>");
+
+    // Первое звено нитки. Всё, что случится дальше — цели, перенос стопа,
+    // слом стратегии, закрытие — придёт ответами сюда же.
+    await postUpdate(posId,
+      `✅ <b>Взято в работу</b> · ${goldenTime(t)}\n` +
+      `<i>Слежу за целями, стопом и сломом стратегии. История сделки — здесь.</i>`);
     return;
   }
 
@@ -402,7 +423,19 @@ async function main() {
   ]});
 
   STRATEGIES = await loadStrategies();
-  await marketSnapshot().catch(e => log("первый скан не удался:", e.message));
+
+  // Владелец известен из .env — заводим его сразу, чтобы сигналы уходили
+  // ещё до первого /start.
+  const owner = ownerId();
+  if (owner) {
+    upsertUser(owner, null, null, "owner");
+    setRole(owner, "owner");
+  }
+
+  // Скан сразу при запуске, не дожидаясь следующей четверти часа:
+  // компьютер могли включить в 10:01, ждать до 10:15 незачем.
+  // Повторные сигналы не продублируются — ключ по времени бара.
+  await scanTick().catch(e => log("первый скан не удался:", e.message));
   logEvent({ kind: "note", text: `бот запущен, стратегий ${STRATEGIES.length}` });
   startLoops({ scanTick, watchTick });
   startReports({ onDaily, onMonthly });
