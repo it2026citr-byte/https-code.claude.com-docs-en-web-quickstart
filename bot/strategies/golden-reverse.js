@@ -104,17 +104,23 @@ export default {
   invalidated(c, x, i, pos) {
     const long = pos.side === "long";
 
+    // Причина возвращается разобранной: заголовок отдельно, подробность
+    // отдельно, уровень числом. Оформлением занимается тот, кто выводит.
     if (long ? x.ut.sell[i] : x.ut.buy[i])
-      return { reason: "opposite", text: `Встречный сигнал стратегии: UT Bot развернулся ${long ? "вниз" : "вверх"}` };
+      return { reason: "opposite", label: "Встречный сигнал стратегии",
+               detail: `UT Bot развернулся ${long ? "вниз" : "вверх"}` };
 
     const lvl = long ? x.str.lastLow[i] : x.str.lastHigh[i];
     if (lvl != null && (long ? c[i].c < lvl : c[i].c > lvl))
-      return { reason: "choch", text: `Слом структуры: закрытие ${long ? "ниже" : "выше"} ${lvl}` };
+      return { reason: "choch", label: "Слом структуры",
+               detail: `цена ушла ${long ? "ниже" : "выше"} свингового уровня`,
+               level: lvl };
 
     const m = x.sqz.mom, prev = m[i - 1];
     if (m[i] != null && prev != null &&
         (long ? m[i] < 0 && prev < 0 : m[i] > 0 && prev > 0))
-      return { reason: "momentum", text: `Разворот моментума: два бара против позиции` };
+      return { reason: "momentum", label: "Разворот моментума",
+               detail: "два бара подряд против позиции" };
 
     return null;
   },

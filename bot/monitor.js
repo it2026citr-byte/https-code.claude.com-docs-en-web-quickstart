@@ -45,6 +45,16 @@ export function closePosition(p, price, reason) {
 
 const rTxt = (r) => `${r > 0 ? "+" : ""}${r.toFixed(2)}R`;
 
+/** Причина слома жирным заголовком; уровень — уже причёсанным числом. */
+export const badHtml = (b) =>
+  `<b>${b.label}</b>` +
+  (b.detail ? `\n${b.detail}` : "") +
+  (b.level != null ? ` <b>${fmtPrice(b.level)}</b>` : "");
+
+/** То же самое строкой — для журнала и для ключа дедупликации. */
+export const badText = (b) =>
+  `${b.label}: ${b.detail ?? ""}${b.level != null ? " " + fmtPrice(b.level) : ""}`.trim();
+
 /**
  * Такт присмотра.
  *
@@ -139,14 +149,14 @@ export async function monitorTick({ strategies, notify, focus }) {
     if (barIsNew) {
       db.prepare("UPDATE positions SET last_bar=? WHERE id=?").run(c[iClosed].t, p.id);
       const bad = st.invalidated(c, x, iClosed, p);
-      if (bad && once(p.id, "red", bad.reason, bad.text)) {
+      if (bad && once(p.id, "red", bad.reason, badText(bad))) {
         events++;
         logEvent({ kind: "broken", strategy: p.strategy, symbol: p.symbol,
-                   side: p.side, price, r: rAt(p, price), text: bad.text });
+                   side: p.side, price, r: rAt(p, price), text: badText(bad) });
         await notify(p.id,
-          `🔴 <b>ВЫХОД — стратегия сломана</b>\n` +
+          `🔴 <b>ВЫХОД — СТРАТЕГИЯ СЛОМАНА</b>\n` +
           `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
-          `${bad.text}\n\n` +
+          `${badHtml(bad)}\n\n` +
           `Цена ${fmtPrice(price)} · стоп ${fmtPrice(sl)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
           `<i>Подтверждено на закрытии бара. Выходи, не дожидаясь стопа.</i>`,
           [[{ text: "✅ Вышел", callback_data: `exit:${p.id}` },
@@ -159,16 +169,16 @@ export async function monitorTick({ strategies, notify, focus }) {
     if (!focus) continue;
     const early = st.invalidated(c, x, iLive, p);
     if (!early) continue;
-    if (!once(p.id, "yellow", early.reason, early.text)) continue;
+    if (!once(p.id, "yellow", early.reason, badText(early))) continue;
 
     events++;
     const left = Math.max(0, (Math.floor(now() / step) * step + step) - now());
     logEvent({ kind: "note", strategy: p.strategy, symbol: p.symbol, side: p.side,
-               price, text: `жёлтая тревога: ${early.text}` });
+               price, text: `жёлтая тревога: ${badText(early)}` });
     await notify(p.id,
-      `🟡 <b>Тревога — условие выхода выполнено</b>\n` +
+      `🟡 <b>ТРЕВОГА — условие выхода выполнено</b>\n` +
       `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
-      `${early.text}\n\n` +
+      `${badHtml(early)}\n\n` +
       `Цена ${fmtPrice(price)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
       `<i>Свеча ещё не закрылась, до закрытия ${fmtAgo(left)}. ` +
       `Успеет отыграть — тревога снимется, нет — придёт красная.</i>`,
