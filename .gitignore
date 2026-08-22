@@ -9,3 +9,7 @@ signals/
 golden-package.zip
 tradingview-mexc-golden-*.zip
 ТРЕЙДИНГ-ПОЛНЫЙ-АРХИВ-*.zip
+
+# секреты и состояние бота
+bot/.env
+bot/storage/

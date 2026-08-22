@@ -1,0 +1,158 @@
+import { cfg, log } from "./config.js";
+import {
+  db, now, getSetting, setSetting, upsertUser, openPositions,
+  getMode, setMode, MODE_SCAN, MODE_FOCUS,
+} from "./db.js";
+import { api, send, broadcast, answerCallback, startPolling, esc } from "./telegram.js";
+import { topPairs } from "./data/tradingview.js";
+import { prices } from "./data/mexc.js";
+import { startLoops } from "./scheduler.js";
+import { fmtPrice, fmtPct, fmtUsd, fmtAgo, fmtTime } from "./format.js";
+
+const STARTED = now();
+
+// --- состояние рынка --------------------------------------------------------
+async function marketSnapshot() {
+  const top = await topPairs();
+  setSetting("last_market_seen", now());
+  setSetting("universe_size", top.length);
+  return top;
+}
+
+// --- такты ------------------------------------------------------------------
+async function scanTick() {
+  const top = await marketSnapshot();
+  log(`скан: ${top.length} пар в работе`);
+  if (getSetting("pulse", "1") === "1") {
+    const t = top.slice(0, 3)
+      .map(r => `${r.symbol.replace("USDT", "")} ${fmtPrice(r.close)} (${fmtPct(r.change)})`)
+      .join(" · ");
+    await broadcast(`📊 ${t}\n<i>вселенная ${top.length} пар · этап 1, стратегии подключаются следующим шагом</i>`);
+  }
+}
+
+async function watchTick({ focus }) {
+  const pos = openPositions();
+  if (!pos.length) return;
+  const px = await prices([...new Set(pos.map(p => p.symbol))]);
+  setSetting("last_market_seen", now());
+  log(`присмотр${focus ? " (фокус)" : ""}: ${pos.length} позиций, цены получены по ${Object.keys(px).length}`);
+  // Проверка целей, стопа и нарушения стратегии — этап 3.
+}
+
+// --- команды ----------------------------------------------------------------
+const HELP = `<b>Что я умею</b>
+
+/status — режим, что вижу на рынке, открытые сделки
+/focus — бросить всё и следить только за взятыми сделками
+/scan — вернуться к поиску новых монет
+/pulse — включить/выключить сводку раз в 15 минут
+/help — это сообщение
+
+<i>Telegram понимает только латиницу в командах, но я отзываюсь и на русские:
+/статус /фокус /скан /пульс /помощь</i>
+
+<i>Скоро: сигналы по стратегиям, кнопка «Взял в работу», тревоги на выход.</i>`;
+
+async function statusText() {
+  const mode = getMode();
+  const pos = openPositions();
+  const seen = Number(getSetting("last_market_seen", "0"));
+  const uni = getSetting("universe_size", "—");
+
+  const lines = [
+    `<b>Режим:</b> ${mode === MODE_FOCUS ? "🎯 фокус на сделках" : "🔍 скан рынка"}`,
+    `<b>Рынок видел:</b> ${seen ? fmtAgo(now() - seen) + " назад" : "ещё нет"}`,
+    `<b>Вселенная:</b> ${uni} пар MEXC/USDT дороже ${fmtUsd(cfg.minTurnoverUsd)} $ оборота`,
+    `<b>Открытых сделок:</b> ${pos.length}`,
+    `<b>Работаю без перерыва:</b> ${fmtAgo(now() - STARTED)}`,
+  ];
+  if (pos.length) {
+    lines.push("", "<b>В работе:</b>");
+    for (const p of pos) {
+      lines.push(`• ${p.side === "long" ? "📈" : "📉"} ${esc(p.symbol)} от ${fmtPrice(p.entry)} · ${esc(p.strategy)}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+async function onMessage(msg) {
+  const chatId = msg.chat.id;
+  const text = msg.text.trim();
+  const cmd = text.split(/\s+/)[0].toLowerCase().replace(/@.*$/, "");
+
+  if (cmd === "/start") {
+    upsertUser(chatId, msg.from?.username);
+    await send(chatId,
+      `Готов работать.\n\nЯ ищу точки входа по фьючерсам MEXC, показываю сигналы и слежу за теми, что ты взял в работу. Когда стратегия ломается — предупреждаю до стопа.\n\n${HELP}`);
+    return;
+  }
+  upsertUser(chatId, msg.from?.username);
+
+  switch (cmd) {
+    case "/help": case "/помощь":
+      await send(chatId, HELP); break;
+
+    case "/status": case "/статус":
+      await send(chatId, await statusText()); break;
+
+    case "/focus": case "/фокус": {
+      setMode(MODE_FOCUS);
+      const n = openPositions().length;
+      await send(chatId,
+        `🎯 <b>Фокус включён.</b>\n\nПоиск новых монет остановлен. Все силы на ${n} ${n === 1 ? "сделку" : "сделки"} — проверка каждые ${cfg.focusIntervalSec} секунд вместо ${cfg.scanIntervalMin} минут.\n\n<i>Вернуться: /scan</i>`);
+      break;
+    }
+    case "/scan": case "/скан":
+      setMode(MODE_SCAN);
+      await send(chatId, `🔍 <b>Скан включён.</b>\n\nСнова ищу точки входа по всему рынку. Взятые сделки по-прежнему под присмотром, но проверяются раз в ${cfg.normalWatchMin} минут.`);
+      break;
+
+    case "/pulse": case "/пульс": {
+      const on = getSetting("pulse", "1") === "1";
+      setSetting("pulse", on ? "0" : "1");
+      await send(chatId, on ? "Пульс выключен." : "Пульс включён — сводка раз в 15 минут.");
+      break;
+    }
+    default:
+      await send(chatId, "Не знаю такой команды. /помощь");
+  }
+}
+
+async function onCallback(q) {
+  await answerCallback(q.id, "Кнопки заработают на следующем этапе");
+}
+
+// --- запуск -----------------------------------------------------------------
+async function main() {
+  const me = await api("getMe");
+  log(`бот @${me.username} на связи`);
+
+  // Честный доклад о простое: пока компьютер спал, рынок никто не смотрел.
+  const seen = Number(getSetting("last_market_seen", "0"));
+  const gap = seen ? now() - seen : 0;
+  const pos = openPositions();
+  if (gap > 20 * 60 && pos.length) {
+    await broadcast(
+      `⏰ <b>Меня не было ${fmtAgo(gap)}</b> — с ${fmtTime(seen)}.\n` +
+      `Открытых сделок: ${pos.length}. Проверяю, что с ними произошло.`);
+  } else if (gap > 60 * 60) {
+    await broadcast(`⏰ Снова на связи. Меня не было ${fmtAgo(gap)}.`);
+  }
+
+  // Telegram требует латиницу в именах команд; описания могут быть русскими.
+  await api("setMyCommands", { commands: [
+    { command: "status", description: "режим и открытые сделки" },
+    { command: "focus",  description: "следить только за взятыми сделками" },
+    { command: "scan",   description: "искать новые точки входа" },
+    { command: "pulse",  description: "сводка раз в 15 минут" },
+    { command: "help",   description: "список команд" },
+  ]});
+
+  await marketSnapshot().catch(e => log("первый скан не удался:", e.message));
+  startLoops({ scanTick, watchTick });
+  await startPolling({ onMessage, onCallback });
+}
+
+process.on("SIGINT", () => { log("остановка"); db.close(); process.exit(0); });
+main().catch(e => { log("фатально:", e.message); process.exit(1); });

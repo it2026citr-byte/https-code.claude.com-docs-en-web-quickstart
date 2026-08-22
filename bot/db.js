@@ -1,0 +1,127 @@
+import { DatabaseSync } from "node:sqlite";
+import { cfg } from "./config.js";
+
+export const db = new DatabaseSync(cfg.dbPath);
+
+db.exec(`
+PRAGMA journal_mode = WAL;
+
+CREATE TABLE IF NOT EXISTS settings (
+  key   TEXT PRIMARY KEY,
+  value TEXT
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  chat_id   INTEGER PRIMARY KEY,
+  username  TEXT,
+  joined_at INTEGER,
+  active    INTEGER DEFAULT 1
+);
+
+-- Сигнал: то, что предложила стратегия. Ещё не сделка.
+CREATE TABLE IF NOT EXISTS signals (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  strategy   TEXT NOT NULL,
+  symbol     TEXT NOT NULL,
+  side       TEXT NOT NULL,          -- long | short
+  tf         TEXT NOT NULL,
+  entry      REAL NOT NULL,
+  sl         REAL NOT NULL,
+  targets    TEXT NOT NULL,          -- JSON-массив
+  reason     TEXT,
+  created_at INTEGER NOT NULL,
+  bar_time   INTEGER NOT NULL,       -- время бара, на котором родился сигнал
+  status     TEXT NOT NULL DEFAULT 'new'   -- new | taken | skipped | expired
+);
+CREATE UNIQUE INDEX IF NOT EXISTS signals_uniq
+  ON signals(strategy, symbol, side, bar_time);
+
+-- Позиция: сигнал, который пользователь взял в работу.
+CREATE TABLE IF NOT EXISTS positions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  signal_id   INTEGER,
+  chat_id     INTEGER NOT NULL,
+  strategy    TEXT NOT NULL,
+  symbol      TEXT NOT NULL,
+  side        TEXT NOT NULL,
+  tf          TEXT NOT NULL,
+  entry       REAL NOT NULL,
+  sl          REAL NOT NULL,
+  sl_current  REAL NOT NULL,         -- подтягивается в безубыток
+  targets     TEXT NOT NULL,
+  tp_hit      INTEGER DEFAULT 0,
+  opened_at   INTEGER NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'open',  -- open | closed
+  closed_at   INTEGER,
+  close_price REAL,
+  close_reason TEXT,
+  r_result    REAL
+);
+
+-- Тревоги: чтобы не слать одно и то же дважды.
+CREATE TABLE IF NOT EXISTS alerts (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  position_id INTEGER NOT NULL,
+  level       TEXT NOT NULL,         -- yellow | red | target | stop | info
+  reason      TEXT NOT NULL,
+  text        TEXT,
+  created_at  INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS alerts_uniq
+  ON alerts(position_id, level, reason);
+
+-- Кеш свечей, чтобы не дёргать биржу лишний раз.
+CREATE TABLE IF NOT EXISTS candles (
+  symbol    TEXT NOT NULL,
+  tf        TEXT NOT NULL,
+  open_time INTEGER NOT NULL,
+  o REAL, h REAL, l REAL, c REAL, v REAL,
+  PRIMARY KEY (symbol, tf, open_time)
+);
+`);
+
+const _get = db.prepare("SELECT value FROM settings WHERE key = ?");
+const _set = db.prepare(
+  "INSERT INTO settings(key, value) VALUES(?, ?) " +
+  "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+);
+
+export function getSetting(key, fallback = null) {
+  const r = _get.get(key);
+  return r === undefined ? fallback : r.value;
+}
+export function setSetting(key, value) {
+  _set.run(key, String(value));
+}
+export function getJSON(key, fallback) {
+  const v = getSetting(key);
+  if (v === null) return fallback;
+  try { return JSON.parse(v); } catch { return fallback; }
+}
+export function setJSON(key, value) { setSetting(key, JSON.stringify(value)); }
+
+export const now = () => Math.floor(Date.now() / 1000);
+
+// --- пользователи -----------------------------------------------------------
+export function upsertUser(chatId, username) {
+  db.prepare(
+    "INSERT INTO users(chat_id, username, joined_at, active) VALUES(?,?,?,1) " +
+    "ON CONFLICT(chat_id) DO UPDATE SET username = excluded.username, active = 1"
+  ).run(chatId, username || "", now());
+}
+export function activeUsers() {
+  return db.prepare("SELECT chat_id FROM users WHERE active = 1").all()
+           .map(r => r.chat_id);
+}
+
+// --- режим ------------------------------------------------------------------
+export const MODE_SCAN = "scan";
+export const MODE_FOCUS = "focus";
+export const getMode = () => getSetting("mode", MODE_SCAN);
+export const setMode = (m) => setSetting("mode", m);
+
+export function openPositions(chatId = null) {
+  return chatId === null
+    ? db.prepare("SELECT * FROM positions WHERE status = 'open'").all()
+    : db.prepare("SELECT * FROM positions WHERE status='open' AND chat_id=?").all(chatId);
+}
