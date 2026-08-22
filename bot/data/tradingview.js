@@ -1,4 +1,5 @@
 import { cfg, log } from "../config.js";
+import { num } from "../runtime.js";
 
 const URL = "https://scanner.tradingview.com/crypto/scan";
 
@@ -23,7 +24,9 @@ const STABLE = /^(USDC|FDUSD|TUSD|DAI|BUSD|USDE|USDP|PYUSD|EURT|EURS|USD1|USDD|X
  * скринера выносит наверх микро-токены, а BTC проваливается. Готовой
  * колонки оборота в долларах нет — считаем volume × close сами.
  */
-export async function topPairs(limit = cfg.topByTurnover) {
+export async function topPairs(limit = null) {
+  const cap = limit ?? num("top_pairs");
+  const minUsd = num("min_turn_k") * 1000;
   const j = await scan({
     filter: [
       { left: "exchange", operation: "equal", right: "MEXC" },
@@ -41,10 +44,11 @@ export async function topPairs(limit = cfg.topByTurnover) {
     if (STABLE.test(name)) continue;
     if (/\d+(L|S)USDT$/.test(name)) continue;       // плечевые токены
     const volUsd = volume * close;
-    if (volUsd < cfg.minTurnoverUsd) continue;
+    if (volUsd < minUsd) continue;
     rows.push({ symbol: name, close, volUsd, change });
   }
   rows.sort((a, b) => b.volUsd - a.volUsd);
-  log(`TradingView: ${j.totalCount} пар, после фильтров ${rows.length}`);
-  return rows.slice(0, limit);
+  log(`TradingView: ${j.totalCount} пар, порог ${(minUsd/1000).toFixed(0)} тыс $ → ` +
+      `${rows.length}, берём ${Math.min(cap, rows.length)}`);
+  return rows.slice(0, cap);
 }

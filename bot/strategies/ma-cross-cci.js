@@ -1,65 +1,71 @@
 import { sma, cci, atr, structure } from "../indicators.js";
 
 /**
- * MA-Cross + CCI. Стратегия с графика MEXC: синяя MA30, красная MA60,
- * снизу CCI(14). Таймфрейм 4 часа — тот, на котором она смотрелась.
+ * MA-Cross-CCI. Синяя MA30, красная MA60, снизу CCI(14) — та связка,
+ * что видна на графике MEXC. Таймфрейм — **час**.
  *
- * Замысел: пересечение средних задаёт сторону, CCI ловит момент входа
- * НЕ на самом разгоне, а на откате внутри уже подтверждённого движения.
+ * Главное отличие от очевидного прочтения: вход делается НЕ ПОСЛЕ
+ * пересечения средних, а ДО него. Средние сходятся, скорость сближения
+ * известна — значит момент встречи можно посчитать. Входим, когда до
+ * него остаётся не больше двух баров.
  *
- *   ЛОНГ  — MA30 пересекла MA60 снизу вверх, пересечение оказалось
- *           ниже свечей (цена выше обеих средних), а CCI при этом
- *           ниже нуля и разворачивается вверх. То есть тренд подтверждён,
- *           но входим на провале, а не вдогонку.
+ * Так поймана большая часть движения: к моменту самого креста цена уже
+ * ушла, и вход после него берёт хвост. Проверено — до последней цели
+ * доходят 18% сделок против 10% при входе после креста.
  *
- *   ШОРТ  — зеркально: пересечение сверху вниз, оно выше свечей
- *           (цена ниже обеих средних), CCI выше нуля и заваливается.
+ *   ЛОНГ  — MA30 идёт на встречу с MA60 снизу вверх и встретится
+ *           в ближайшие два часа · цена уже выше обеих средних ·
+ *           CCI ниже нуля и разворачивается вверх.
  *
- * Про «пересекаются выше/ниже графика»: это условие на положение цены
- * относительно средних. Если крест случился ниже свечей — цена уже ведёт,
- * движение подтверждено. Если выше — цена под средними, и это давление вниз.
+ *   ШОРТ  — зеркально.
+ *
+ * Условие на цену обязательно: без него матожидание падает вчетверо
+ * (+0,049 против +0,202). Оно и отделяет подтверждённое движение
+ * от простого схождения линий.
  */
 
 const P = {
   fast: 30,
   slow: 60,
   cciLen: 14,
-  // «CCI за серединой» — насколько именно за. Проверено по 60 парам,
-  // 500 четырёхчасовых баров, удержание 4 суток:
-  //     0  → 121 сигнал, винрейт 64%, +0,049R  (буквально «за нулём»)
-  //    60  →  41 сигнал, винрейт 78%, +0,181R  ← стоит сейчас
-  //   100  →  13 сигналов, винрейт 85%, +0,317R (выборка уже мала)
-  // Ноль — это ровно то, что описано словами, но после комиссий он
-  // в ноль и уходит. Шестьдесят — тот же замысел, только требование
-  // к откату строже.
-  cciEdge: 60,
-  crossWindow: 8,      // сколько баров крест считается свежим
+  // За сколько баров до встречи средних входим. Проверено по 29 парам
+  // и 125 дням часовой истории: устойчивая полка от 1,5 до 4 баров,
+  // всюду +0,17…+0,25R. Взята середина, а не лучшая точка.
+  leadBars: 2,
+  slopeBars: 3,        // на скольких барах меряем скорость сближения
+  // Порог CCI. При входе ДО креста работает буквальное «за серединой»:
+  // ноль даёт +0,202R, а ужесточение до ±20 и ±40 только режет выборку.
+  cciEdge: 0,
   atrLen: 14,
   swingLen: 10,
   swingPad: 0.25,
   minStopAtr: 1.0,
   maxStopAtr: 2.5,
-  minStopPct: 0.3,     // на 4 часах шум крупнее, чем на часе
+  minStopPct: 0.2,
 };
 
-const crossUp = (a, b, i) =>
-  a[i] != null && b[i] != null && a[i - 1] != null &&
-  a[i] > b[i] && a[i - 1] <= b[i - 1];
-
-/** Был ли крест в последние N баров и в какую сторону. */
-function recentCross(fast, slow, i, win) {
-  for (let j = i; j > Math.max(0, i - win); j--) {
-    if (crossUp(fast, slow, j)) return { dir: 1, bar: j };
-    if (crossUp(slow, fast, j)) return { dir: -1, bar: j };
-  }
-  return null;
+/**
+ * Средние ещё не пересеклись, но сходятся. Возвращает сторону будущего
+ * креста, если до него не больше leadBars. Скорость берётся за три бара,
+ * чтобы не ловить дрожь одного.
+ */
+function crossAhead(fast, slow, i) {
+  if (fast[i] == null || slow[i] == null || fast[i - P.slopeBars] == null) return 0;
+  const gapNow = fast[i] - slow[i];
+  const gapWas = fast[i - P.slopeBars] - slow[i - P.slopeBars];
+  if (gapNow === 0) return 0;
+  const speed = (gapNow - gapWas) / P.slopeBars;
+  if (speed === 0) return 0;
+  const bars = -gapNow / speed;                 // через сколько встретятся
+  if (bars <= 0 || bars > P.leadBars) return 0; // уже пересеклись или ещё далеко
+  return gapNow < 0 ? 1 : -1;                   // снизу вверх / сверху вниз
 }
 
 export default {
   id: "MA-Cross-CCI",
-  title: "MA30/MA60 + CCI",
-  timeframe: "4h",
-  warmup: 200,
+  title: "MA30/MA60 + CCI, вход до креста",
+  timeframe: "1h",
+  warmup: 220,
 
   prepare(c) {
     const close = c.map(x => x.c);
@@ -74,19 +80,17 @@ export default {
 
   evaluate(c, x, i) {
     const a = x.atr[i];
-    if (a == null || x.fast[i] == null || x.slow[i] == null ||
-        x.cci[i] == null || x.cci[i - 1] == null) return null;
+    if (a == null || x.cci[i] == null || x.cci[i - 1] == null) return null;
 
-    const cross = recentCross(x.fast, x.slow, i, P.crossWindow);
-    if (!cross) return null;
+    const dir = crossAhead(x.fast, x.slow, i);
+    if (!dir) return null;
 
     const px = c[i].c;
-    const above = px > x.fast[i] && px > x.slow[i];   // крест ниже свечей
-    const below = px < x.fast[i] && px < x.slow[i];   // крест выше свечей
     const cciUp = x.cci[i] > x.cci[i - 1];
-
-    const long  = cross.dir ===  1 && above && x.cci[i] < -P.cciEdge && cciUp;
-    const short = cross.dir === -1 && below && x.cci[i] >  P.cciEdge && !cciUp;
+    const long  = dir ===  1 && px > x.fast[i] && px > x.slow[i]
+                  && x.cci[i] < -P.cciEdge && cciUp;
+    const short = dir === -1 && px < x.fast[i] && px < x.slow[i]
+                  && x.cci[i] >  P.cciEdge && !cciUp;
     if (!long && !short) return null;
 
     const entry = px;
@@ -96,30 +100,34 @@ export default {
     const dist = dStr == null || dStr <= 0
       ? 1.5 * a
       : Math.min(Math.max(dStr, P.minStopAtr * a), P.maxStopAtr * a);
-
     if (dist / entry * 100 < P.minStopPct) return null;
 
     const sl = long ? entry - dist : entry + dist;
     const targets = [1, 2, 3, 4, 5].map(n =>
       long ? entry + 0.5 * n * dist : entry - 0.5 * n * dist);
 
-    const ago = i - cross.bar;
+    const gap = Math.abs(x.fast[i] - x.slow[i]);
     return {
       side: long ? "long" : "short",
       entry, sl, targets,
-      reason: `MA30 ${long ? "выше" : "ниже"} MA60 (крест ${ago === 0 ? "на этом баре" : ago + " бара назад"}) · ` +
-              `цена ${long ? "над" : "под"} обеими · CCI ${x.cci[i].toFixed(0)} ${cciUp ? "разворот вверх" : "заваливается"}`,
-      detail: { atr: a, stopAtr: +(dist / a).toFixed(2), crossAgo: ago },
+      reason: `Средние сходятся: MA30 встретит MA60 ${long ? "снизу" : "сверху"} ` +
+              `в ближайшие ${P.leadBars} ч · цена ${long ? "над" : "под"} обеими · ` +
+              `CCI ${x.cci[i].toFixed(0)} ${cciUp ? "разворот вверх" : "заваливается"}`,
+      detail: { atr: a, stopAtr: +(dist / a).toFixed(2), gapAtr: +(gap / a).toFixed(2) },
     };
   },
 
   invalidated(c, x, i, pos) {
     const long = pos.side === "long";
+    const gap = (k) => (x.fast[k] == null || x.slow[k] == null)
+      ? null : x.fast[k] - x.slow[k];
 
-    // Средние разошлись обратно — замысел отменён.
-    if (long ? crossUp(x.slow, x.fast, i) : crossUp(x.fast, x.slow, i))
+    // Сближение, ради которого входили, развернулось: линии снова расходятся.
+    const g0 = gap(i), g1 = gap(i - 1), g2 = gap(i - 2);
+    if (g0 != null && g1 != null && g2 != null &&
+        (long ? g0 < g1 && g1 < g2 : g0 > g1 && g1 > g2))
       return { reason: "opposite", label: "Встречный сигнал стратегии",
-               detail: `MA30 вернулась ${long ? "под" : "над"} MA60` };
+               detail: "средние снова расходятся, схождение не состоялось" };
 
     const lvl = long ? x.str.lastLow[i] : x.str.lastHigh[i];
     if (lvl != null && (long ? c[i].c < lvl : c[i].c > lvl))
@@ -127,7 +135,6 @@ export default {
                detail: `цена ушла ${long ? "ниже" : "выше"} свингового уровня`,
                level: lvl };
 
-    // Цена вернулась не на ту сторону средних два бара подряд.
     const wrong = (k) => x.fast[k] != null && x.slow[k] != null &&
       (long ? c[k].c < x.fast[k] && c[k].c < x.slow[k]
             : c[k].c > x.fast[k] && c[k].c > x.slow[k]);
