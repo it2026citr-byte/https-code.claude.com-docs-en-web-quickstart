@@ -1,0 +1,77 @@
+3bebb3d  2026-08-22 16:04  Keep bundled archives out of git: they embed the untracked signals/ directory
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+e6a188c  2026-08-22 16:03  Add project overview covering scanner, strategies, signal analysis and MCP server
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+e2562ba  2026-08-22 15:37  Make scanner mobile-friendly; publish copy to docs/ for GitHub Pages
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+a0fc022  2026-08-22 15:27  Add MEXC signal scanner: standalone live site via TradingView screener
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+aff352a  2026-08-22 15:10  Add package README; keep signals archive out of git
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+ac6e69f  2026-08-22 14:40  Add Golden Reverse strategy: reverse-engineered exit geometry with risk-based sizing
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+831797c  2026-08-20 20:58  Remove signals scanner from repository, keep it local-only
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+926fcd5  2026-08-05 23:15  Refresh signals dashboard data
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+f152b39  2026-08-05 22:56  Add crypto signals scanner: strategy-based algorithm over top-30 Binance pairs, 4 timeframes, HTML dashboard generator
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+2115312  2026-08-05 18:47  Upgrade SMC layer to LuxAlgo-style leg structure (internal+swing) with premium/discount zones
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+132e1df  2026-08-05 18:44  Add Smart Money Concepts structure filter (BOS/CHoCH), rename to universal-strategy
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+d84fcd1  2026-08-05 18:42  Add Squeeze Momentum (LazyBear) as third filter layer to combined strategy
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+5eebb95  2026-08-05 18:40  Add optional UT Bot bar coloring from original indicator
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+807fd21  2026-08-05 18:39  Add combined UT Bot + CCI Pine Script strategy
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+a2a0f1b  2026-08-01 19:30  Add TradingView MCP server with symbol search, quotes, technical analysis, and market screener
+Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01A9EjwRkHmDhKrscTNx3y1Z
+
+=== СОСТАВ РЕПОЗИТОРИЯ ===
+.gitignore
+"README-\320\237\320\220\320\232\320\225\320\242.md"
+README.md
+docs/README.md
+docs/index.html
+package-lock.json
+package.json
+scanner/README.md
+scanner/mexc-scanner.html
+src/client.ts
+src/index.ts
+src/technicals.ts
+strategies/golden-reverse-strategy.pine
+strategies/universal-strategy.pine
+tsconfig.json
+"\320\235\320\220\320\247\320\235\320\230-\320\236\320\242\320\241\320\256\320\224\320\220.md"
