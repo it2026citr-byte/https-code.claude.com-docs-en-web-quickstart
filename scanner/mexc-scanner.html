@@ -1,0 +1,526 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MEXC Signal Scanner</title>
+<style>
+  /* Терминал: тёмная тема выбрана намеренно — экран смотрят часами.
+     Янтарь — акцент интерфейса; зелёный и красный зарезервированы строго под
+     покупку и продажу и нигде больше не используются. */
+  :root{
+    --bg:#0e1420; --surface:#161e2d; --surface2:#1c2637; --line:#243044;
+    --ink:#e6ecf5; --ink2:#8fa0b8; --ink3:#5c6b82;
+    --accent:#e0a33c; --accent-dim:#3a2f18;
+    --buy:#2fbf8f; --buy-bg:#123329; --sell:#f0555c; --sell-bg:#3a1b1e;
+    --neu:#6b7c94; --neu-bg:#1e2836;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);
+       -webkit-font-smoothing:antialiased}
+  .wrap{max-width:1400px;margin:0 auto;padding:20px 18px 60px;display:flex;flex-direction:column;gap:16px}
+
+  /* — шапка — */
+  header{display:flex;flex-wrap:wrap;align-items:baseline;gap:12px 20px;padding-bottom:14px;
+         border-bottom:1px solid var(--line)}
+  h1{margin:0;font-size:19px;font-weight:650;letter-spacing:-.01em}
+  h1 span{color:var(--accent)}
+  .status{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink2);
+          font-variant-numeric:tabular-nums}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--neu);flex:none}
+  .dot.live{background:var(--buy);box-shadow:0 0 0 3px rgba(47,191,143,.18)}
+  .dot.err{background:var(--sell);box-shadow:0 0 0 3px rgba(240,85,92,.18)}
+  .dot.load{background:var(--accent);animation:pulse 1s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+  @media (prefers-reduced-motion:reduce){.dot.load{animation:none}}
+  .spacer{flex:1 1 auto}
+
+  button,select,input{font:inherit;color:var(--ink);background:var(--surface2);
+    border:1px solid var(--line);border-radius:7px;padding:6px 11px}
+  button{cursor:pointer}
+  button:hover{border-color:var(--ink3)}
+  button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#1a1206;font-weight:600}
+  button.primary:hover{filter:brightness(1.08)}
+
+  /* — плитки — */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:10px}
+  .tile{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .tile .v{font:650 26px/1.1 var(--mono);font-variant-numeric:tabular-nums}
+  .tile .l{font-size:11px;color:var(--ink2);text-transform:uppercase;letter-spacing:.07em;margin-top:4px}
+  .v.buy{color:var(--buy)} .v.sell{color:var(--sell)} .v.neu{color:var(--neu)} .v.acc{color:var(--accent)}
+
+  /* — панель настроек — */
+  .controls{display:flex;flex-wrap:wrap;gap:10px 14px;align-items:center;
+            background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .ctl{display:flex;align-items:center;gap:7px;font-size:13px;color:var(--ink2)}
+  .ctl input[type=number]{width:78px} .ctl input[type=search]{width:150px}
+  .ctl input[type=checkbox]{width:15px;height:15px;accent-color:var(--accent);padding:0}
+
+  /* — таблица — */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;overflow-x:auto}
+  table{border-collapse:collapse;width:100%;min-width:940px}
+  th{position:sticky;top:0;z-index:2;background:var(--surface);text-align:left;
+     font-size:10.5px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3);
+     font-weight:600;padding:11px 12px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th.sortable{cursor:pointer;user-select:none}
+  th.sortable:hover{color:var(--ink2)}
+  th .arrow{color:var(--accent)}
+  td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:middle}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:var(--surface2)}
+  tbody tr.open{background:var(--surface2)}
+  .num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .pair{font-weight:650}
+  .sub{display:block;font-size:11.5px;color:var(--ink3);margin-top:2px}
+  .up{color:var(--buy)} .down{color:var(--sell)}
+
+  .pill{display:inline-block;padding:2px 8px;border-radius:999px;font:700 11.5px/1.5 var(--sans);
+        white-space:nowrap;letter-spacing:.02em}
+  .p-sbuy{background:var(--buy);color:#062018} .p-buy{background:var(--buy-bg);color:var(--buy)}
+  .p-neu{background:var(--neu-bg);color:var(--neu)}
+  .p-sell{background:var(--sell-bg);color:var(--sell)} .p-ssell{background:var(--sell);color:#2a0d0f}
+  .sqz{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:999px;
+       font:700 10.5px/1.5 var(--sans);background:var(--accent-dim);color:var(--accent)}
+  .fresh{display:inline-block;margin-left:5px;padding:1px 6px;border-radius:999px;
+       font:700 10.5px/1.5 var(--sans);background:var(--accent);color:#1a1206}
+
+  /* — карточка сигнала — */
+  .detail td{background:#111925;padding:0;border-bottom:1px solid var(--line)}
+  .dbox{padding:16px 18px;display:grid;grid-template-columns:minmax(230px,1fr) minmax(300px,1.4fr);gap:20px}
+  @media (max-width:820px){.dbox{grid-template-columns:1fr}}
+  .dbox h3{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--ink3)}
+  .kv{display:flex;justify-content:space-between;gap:14px;padding:5px 0;font-size:13.5px;
+      border-bottom:1px dashed var(--line)}
+  .kv:last-child{border-bottom:0}
+  .kv span:last-child{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  .tgt{display:flex;justify-content:space-between;align-items:center;gap:10px;
+       padding:6px 10px;border-radius:6px;background:var(--surface2);margin-bottom:5px;font-size:13.5px}
+  .tgt b{font-weight:600;color:var(--ink2);min-width:26px}
+  .tgt .px{font-family:var(--mono);font-variant-numeric:tabular-nums;flex:1;text-align:right}
+  .tgt .pc{font-family:var(--mono);color:var(--ink3);min-width:64px;text-align:right}
+  .tgt.stop{background:var(--sell-bg)} .tgt.stop .px{color:var(--sell)}
+  .note{font-size:12px;color:var(--ink3);line-height:1.6;margin-top:10px}
+
+  .empty{padding:44px 20px;text-align:center;color:var(--ink3)}
+  .err{background:var(--sell-bg);border:1px solid var(--sell);border-radius:10px;
+       padding:12px 14px;font-size:13.5px;color:var(--ink)}
+  footer{color:var(--ink3);font-size:12px;line-height:1.65;max-width:76ch}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>MEXC <span>Signal Scanner</span></h1>
+    <div class="status"><span class="dot" id="dot"></span><span id="statusText">инициализация…</span></div>
+    <div class="spacer"></div>
+    <div class="status" id="nextIn"></div>
+    <button class="primary" id="refreshBtn">Обновить</button>
+  </header>
+
+  <div id="errBox"></div>
+
+  <div class="tiles">
+    <div class="tile"><div class="v buy"  id="cBuy">—</div><div class="l">на покупку</div></div>
+    <div class="tile"><div class="v neu"  id="cNeu">—</div><div class="l">нейтрально</div></div>
+    <div class="tile"><div class="v sell" id="cSell">—</div><div class="l">на продажу</div></div>
+    <div class="tile"><div class="v acc"  id="cSqz">—</div><div class="l">в сквизе</div></div>
+    <div class="tile"><div class="v"      id="cScan">—</div><div class="l">пар просканировано</div></div>
+  </div>
+
+  <div class="controls">
+    <label class="ctl">Топ по обороту
+      <input type="number" id="topN" value="60" min="10" max="400" step="10"> пар</label>
+    <label class="ctl">Порог сигнала
+      <input type="number" id="minScore" value="2" min="0" max="3" step="0.25"></label>
+    <label class="ctl">Стоп, × ATR(1ч)
+      <input type="number" id="atrMult" value="1.5" min="0.2" max="5" step="0.1"></label>
+    <label class="ctl">Риск
+      <input type="number" id="riskPct" value="1" min="0.1" max="20" step="0.1"> %</label>
+    <label class="ctl">Депозит
+      <input type="number" id="equity" value="1000" min="10" step="10"> $</label>
+    <label class="ctl">Обновлять
+      <select id="interval">
+        <option value="0">вручную</option>
+        <option value="60">1 мин</option>
+        <option value="300" selected>5 мин</option>
+        <option value="900">15 мин</option>
+        <option value="3600">1 час</option>
+      </select></label>
+    <label class="ctl"><input type="checkbox" id="notify"> уведомления</label>
+    <label class="ctl"><input type="search" id="search" placeholder="поиск пары"></label>
+  </div>
+
+  <div class="card">
+    <table>
+      <thead><tr>
+        <th class="sortable" data-k="name">Пара</th>
+        <th class="sortable" data-k="close">Цена</th>
+        <th class="sortable" data-k="s15">15 мин</th>
+        <th class="sortable" data-k="s60">1 час</th>
+        <th class="sortable" data-k="s240">4 часа</th>
+        <th class="sortable" data-k="s1d">1 день</th>
+        <th class="sortable" data-k="score">Консенсус</th>
+        <th class="sortable" data-k="volUsd">Оборот 24ч</th>
+      </tr></thead>
+      <tbody id="tbody"><tr><td colspan="8" class="empty">Загрузка данных с TradingView…</td></tr></tbody>
+    </table>
+  </div>
+
+  <footer>
+    <p><b>Как это работает.</b> Страница напрямую обращается к скринеру TradingView и запрашивает
+    все пары биржи MEXC к USDT (около 1700) вместе с готовыми индикаторами на четырёх
+    таймфреймах. Оборот в долларах и отбор топ-N считаются на странице, потому что скринер сортирует по объёму в монетах — иначе BTC и ETH проваливались бы вниз списка. Никакого сервера и посредника: весь расчёт идёт в вашем браузере.</p>
+    <p><b>Сигнал.</b> На каждом таймфрейме три голоса — CCI (импульс), гистограмма MACD
+    (направление momentum) и ансамбль скользящих средних. Счёт от −3 до +3. Консенсус — взвешенное
+    среднее, где 1 ч и 4 ч весят вдвое больше 15 мин и суток. ⚡ — сквиз: полосы Боллинджера внутри
+    канала Кельтнера, низкая волатильность перед возможным импульсом.</p>
+    <p><b>Уровни.</b> Стоп = множитель × ATR(1 ч) — величина, восстановленная из разбора 415 сигналов
+    Crypto Signals Golden. Цели по их же формуле: T(n) = вход ± 0,5·n × расстояние до стопа.
+    Размер позиции считается от вашего риска в процентах, а не от 30% депозита, как у них.</p>
+    <p>Не является финансовой рекомендацией. Данные предоставлены TradingView; при закрытом
+    доступе к сети страница покажет ошибку и повторит попытку на следующем цикле.</p>
+  </footer>
+</div>
+
+<script>
+"use strict";
+const TF = [
+  {k:"s15",  sfx:"|15",  label:"15 мин", w:1},
+  {k:"s60",  sfx:"|60",  label:"1 час",  w:2},
+  {k:"s240", sfx:"|240", label:"4 часа", w:2},
+  {k:"s1d",  sfx:"",     label:"1 день", w:1},
+];
+const PER_TF = ["CCI20","MACD.macd","MACD.signal","Recommend.MA","RSI","ATR"];
+const EXTRA_15 = ["BB.lower|15","BB.upper|15","KltChnl.lower|15","KltChnl.upper|15"];
+
+const COLS = (() => {
+  const c = ["name","close","change","volume"];
+  for (const tf of TF) for (const p of PER_TF) c.push(p + tf.sfx);
+  c.push(...EXTRA_15);
+  return c;
+})();
+
+const $ = id => document.getElementById(id);
+const state = { rows: [], sortKey: "score", sortDir: -1, open: null, seen: {}, timer: null, tick: null, nextAt: 0 };
+
+/* ---------- настройки: живут в браузере ---------- */
+const SETTINGS = ["topN","minScore","atrMult","riskPct","equity","interval","notify"];
+function loadSettings(){
+  try{
+    const s = JSON.parse(localStorage.getItem("mexcScanner") || "{}");
+    for (const id of SETTINGS) if (s[id] !== undefined) {
+      const el = $(id);
+      if (el.type === "checkbox") el.checked = s[id]; else el.value = s[id];
+    }
+    state.seen = JSON.parse(localStorage.getItem("mexcSeen") || "{}");
+  }catch(e){ /* приватный режим — просто работаем без сохранения */ }
+}
+function saveSettings(){
+  try{
+    const s = {};
+    for (const id of SETTINGS){ const el = $(id); s[id] = el.type === "checkbox" ? el.checked : el.value; }
+    localStorage.setItem("mexcScanner", JSON.stringify(s));
+  }catch(e){}
+}
+function saveSeen(){ try{ localStorage.setItem("mexcSeen", JSON.stringify(state.seen)); }catch(e){} }
+
+/* ---------- форматирование ---------- */
+const nf = (v, d) => v.toLocaleString("ru-RU", {minimumFractionDigits:d, maximumFractionDigits:d});
+function fmtPrice(v){
+  if (!isFinite(v)) return "—";
+  const a = Math.abs(v);
+  if (a >= 1000) return nf(v,0);
+  if (a >= 1)    return nf(v,3);
+  if (a >= 0.01) return nf(v,5);
+  if (a >= 1e-6) return nf(v,8);
+  return v.toExponential(3).replace("e","е");
+}
+function fmtVol(u){
+  if (!isFinite(u)) return "—";
+  if (u >= 1e9) return nf(u/1e9,1) + " млрд";
+  if (u >= 1e6) return nf(u/1e6,0) + " млн";
+  return nf(u/1e3,0) + " тыс";
+}
+
+/* ---------- логика сигнала ---------- */
+function bucket(score){
+  if (score >=  2.5) return {cls:"p-sbuy",  txt:"АКТ. ПОКУПКА", dir: 1};
+  if (score >=  1)   return {cls:"p-buy",   txt:"ПОКУПКА",      dir: 1};
+  if (score <= -2.5) return {cls:"p-ssell", txt:"АКТ. ПРОДАЖА", dir:-1};
+  if (score <= -1)   return {cls:"p-sell",  txt:"ПРОДАЖА",      dir:-1};
+  return {cls:"p-neu", txt:"НЕЙТР.", dir: 0};
+}
+const vote = (v, dead=0) => v > dead ? 1 : v < -dead ? -1 : 0;
+
+function buildRow(raw){
+  const g = {};
+  COLS.forEach((c,i) => g[c] = raw.d[i]);
+  const close = g.close;
+  if (!isFinite(close) || close <= 0) return null;
+
+  const row = { pair:g.name, ticker:raw.s, close, change:g.change||0,
+                volUsd:(g.volume||0)*close, tfs:{} };
+  let wsum = 0, ssum = 0;
+  for (const tf of TF){
+    const cci  = g["CCI20"+tf.sfx];
+    const hist = g["MACD.macd"+tf.sfx] - g["MACD.signal"+tf.sfx];
+    const ma   = g["Recommend.MA"+tf.sfx];
+    const rsi  = g["RSI"+tf.sfx];
+    const atr  = g["ATR"+tf.sfx];
+    if ([cci,hist,ma].some(v => v == null || !isFinite(v))){ row[tf.k] = null; continue; }
+    const sc = vote(cci) + vote(hist) + vote(ma, 0.1);
+    row[tf.k] = sc;
+    row.tfs[tf.k] = {score:sc, rsi, atr};
+    ssum += sc * tf.w; wsum += tf.w;
+  }
+  if (!wsum) return null;
+  row.score = ssum / wsum;
+  row.atr1h = row.tfs.s60 ? row.tfs.s60.atr : null;
+  row.sqz = g["BB.lower|15"] > g["KltChnl.lower|15"] && g["BB.upper|15"] < g["KltChnl.upper|15"];
+  return row;
+}
+
+/* ---------- запрос к TradingView ----------
+   Content-Type: text/plain не вызывает предзапрос CORS — иначе TradingView
+   отклонил бы application/json, его allow-headers содержит только Referer и Accept. */
+const STABLE = /^(USDC|FDUSD|TUSD|DAI|BUSD|USDE|USDP|PYUSD|EURT|EURS|USD1|USDD|XAUT|PAXG)USDT$/;
+
+async function fetchScan(){
+  const topN = Math.max(10, Math.min(400, parseInt($("topN").value,10) || 60));
+  // Забираем все пары: TradingView сортирует по объёму в МОНЕТАХ, из-за чего
+  // BTC и ETH оказываются далеко внизу. Оборот в долларах считаем сами.
+  const body = {
+    filter: [
+      {left:"exchange", operation:"equal",   right:"MEXC"},
+      {left:"name",     operation:"match",   right:"USDT$"},
+      {left:"close",    operation:"greater", right:0},
+    ],
+    columns: COLS,
+    sort: {sortBy:"volume", sortOrder:"desc"},
+    range: [0, 2000],
+  };
+  const res = await fetch("https://scanner.tradingview.com/crypto/scan", {
+    method:"POST", headers:{"Content-Type":"text/plain;charset=UTF-8"},
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error("TradingView вернул HTTP " + res.status);
+  const json = await res.json();
+  const rows = (json.data || []).map(buildRow).filter(Boolean)
+                 .filter(r => r.volUsd > 0 && !STABLE.test(r.pair));
+  rows.sort((a,b) => b.volUsd - a.volUsd);
+  return rows.slice(0, topN);
+}
+
+/* ---------- обновление ---------- */
+async function refresh(){
+  setStatus("load", "запрос данных…");
+  try{
+    const rows = await fetchScan();
+    const minScore = parseFloat($("minScore").value) || 0;
+    const fresh = [];
+    for (const r of rows){
+      const b = bucket(r.score);
+      r.dir = Math.abs(r.score) >= minScore ? b.dir : 0;
+      if (r.dir !== 0){
+        const prev = state.seen[r.ticker];
+        r.isNew = prev !== r.dir;
+        if (r.isNew) fresh.push(r);
+        state.seen[r.ticker] = r.dir;
+      } else {
+        r.isNew = false;
+        if (state.seen[r.ticker]) delete state.seen[r.ticker];
+      }
+    }
+    saveSeen();
+    state.rows = rows;
+    render();
+    setStatus("live", "обновлено " + new Date().toLocaleTimeString("ru-RU"));
+    $("errBox").innerHTML = "";
+    if (fresh.length) announce(fresh);
+  }catch(err){
+    setStatus("err", "ошибка загрузки");
+    $("errBox").innerHTML = '<div class="err"><b>Не удалось получить данные.</b> ' +
+      escapeHtml(err.message) + '. Проверьте подключение к сети; следующая попытка — по расписанию.</div>';
+  }
+  scheduleNext();
+}
+
+function announce(fresh){
+  const top = fresh.sort((a,b) => Math.abs(b.score) - Math.abs(a.score)).slice(0,3);
+  const txt = top.map(r => (r.dir > 0 ? "▲ " : "▼ ") + r.pair.replace("USDT","")).join(", ");
+  if ($("notify").checked && "Notification" in window && Notification.permission === "granted"){
+    try{
+      new Notification("Новые сигналы: " + fresh.length,
+        {body: txt, tag:"mexc-scanner", renotify:false});
+    }catch(e){}
+  }
+  document.title = "(" + fresh.length + ") MEXC Signal Scanner";
+  setTimeout(() => { document.title = "MEXC Signal Scanner"; }, 30000);
+}
+
+function setStatus(kind, text){
+  $("dot").className = "dot " + kind;
+  $("statusText").textContent = text;
+}
+
+function scheduleNext(){
+  clearTimeout(state.timer); clearInterval(state.tick);
+  const sec = parseInt($("interval").value, 10);
+  if (!sec){ $("nextIn").textContent = ""; return; }
+  state.nextAt = Date.now() + sec*1000;
+  state.timer = setTimeout(refresh, sec*1000);
+  const upd = () => {
+    const left = Math.max(0, Math.round((state.nextAt - Date.now())/1000));
+    const m = String(Math.floor(left/60)).padStart(2,"0");
+    const s = String(left%60).padStart(2,"0");
+    $("nextIn").textContent = "следующее через " + m + ":" + s;
+  };
+  upd(); state.tick = setInterval(upd, 1000);
+}
+
+/* ---------- отрисовка ---------- */
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+function tfCell(r, key){
+  const t = r.tfs[key];
+  if (!t) return '<td><span class="pill p-neu">—</span></td>';
+  const b = bucket(t.score);
+  const rsi = isFinite(t.rsi) ? Math.round(t.rsi) : "–";
+  const cls = t.rsi >= 70 ? "down" : t.rsi <= 30 ? "up" : "";
+  return '<td><span class="pill '+b.cls+'" title="счёт '+(t.score>0?"+":"")+t.score+' из ±3">'+b.txt+'</span>'
+       + '<span class="sub">RSI <span class="num '+cls+'">'+rsi+'</span></span></td>';
+}
+
+function detailRow(r){
+  const mult = parseFloat($("atrMult").value) || 1.5;
+  const risk = parseFloat($("riskPct").value) || 1;
+  const eq   = parseFloat($("equity").value) || 1000;
+  const atr  = r.atr1h;
+  const long = r.dir > 0;
+  if (!atr || !isFinite(atr) || r.dir === 0){
+    return '<td colspan="8" class="detail"><div class="dbox"><div>'
+         + '<h3>Уровни</h3><p class="note">Для этой пары нет активного сигнала или недоступен ATR(1 ч), '
+         + 'поэтому уровни не рассчитаны.</p></div></div></td>';
+  }
+  const dist = mult * atr;
+  const stop = long ? r.close - dist : r.close + dist;
+  const qty  = (eq * risk / 100) / dist;
+  const notional = qty * r.close;
+
+  let tg = "";
+  for (let n = 1; n <= 5; n++){
+    const px = long ? r.close + 0.5*n*dist : r.close - 0.5*n*dist;
+    const pc = (px - r.close) / r.close * 100 * (long ? 1 : -1);
+    tg += '<div class="tgt"><b>T'+n+'</b><span class="px">'+fmtPrice(px)+'</span>'
+        + '<span class="pc">+'+nf(Math.abs(pc),2)+'%</span></div>';
+  }
+  const slPc = Math.abs((stop - r.close)/r.close*100);
+
+  return '<td colspan="8" class="detail"><div class="dbox">'
+    + '<div><h3>Позиция</h3>'
+    +   '<div class="kv"><span>Направление</span><span>'+(long ? "ЛОНГ" : "ШОРТ")+'</span></div>'
+    +   '<div class="kv"><span>Вход</span><span>'+fmtPrice(r.close)+'</span></div>'
+    +   '<div class="kv"><span>ATR(1 ч)</span><span>'+fmtPrice(atr)+'</span></div>'
+    +   '<div class="kv"><span>Риск на сделку</span><span>'+nf(eq*risk/100,2)+' $</span></div>'
+    +   '<div class="kv"><span>Размер позиции</span><span>'+nf(qty,4)+'</span></div>'
+    +   '<div class="kv"><span>Объём позиции</span><span>'+nf(notional,2)+' $</span></div>'
+    +   '<p class="note">Стоп = '+mult+' × ATR(1 ч). Цели по формуле Golden: '
+    +   'T(n) = вход ± 0,5·n × расстояние до стопа.</p>'
+    + '</div>'
+    + '<div><h3>Уровни</h3>'
+    +   '<div class="tgt stop"><b>SL</b><span class="px">'+fmtPrice(stop)+'</span>'
+    +   '<span class="pc">−'+nf(slPc,2)+'%</span></div>'
+    +   tg
+    + '</div></div></td>';
+}
+
+function render(){
+  const q = $("search").value.trim().toUpperCase();
+  let rows = state.rows.slice();
+  if (q) rows = rows.filter(r => r.pair.includes(q));
+
+  const k = state.sortKey, d = state.sortDir;
+  rows.sort((a,b) => {
+    let x = a[k], y = b[k];
+    if (k === "name"){ x = a.pair; y = b.pair; return x < y ? -d : x > y ? d : 0; }
+    x = (x == null ? -Infinity : x); y = (y == null ? -Infinity : y);
+    return (x - y) * d;
+  });
+
+  const nBuy  = state.rows.filter(r => r.dir > 0).length;
+  const nSell = state.rows.filter(r => r.dir < 0).length;
+  $("cBuy").textContent  = nBuy;
+  $("cSell").textContent = nSell;
+  $("cNeu").textContent  = state.rows.length - nBuy - nSell;
+  $("cSqz").textContent  = state.rows.filter(r => r.sqz).length;
+  $("cScan").textContent = state.rows.length;
+
+  document.querySelectorAll("th.sortable").forEach(th => {
+    const base = th.textContent.replace(/[ ▲▼]+$/,"");
+    th.innerHTML = escapeHtml(base) + (th.dataset.k === k
+      ? ' <span class="arrow">' + (d > 0 ? "▲" : "▼") + '</span>' : "");
+  });
+
+  if (!rows.length){
+    $("tbody").innerHTML = '<tr><td colspan="8" class="empty">Нет пар, подходящих под фильтры. '
+      + 'Снизьте порог оборота или порог сигнала.</td></tr>';
+    return;
+  }
+
+  let html = "";
+  for (const r of rows){
+    const b = bucket(r.score);
+    const isOpen = state.open === r.ticker;
+    html += '<tr data-t="'+escapeHtml(r.ticker)+'"'+(isOpen ? ' class="open"' : '')+'>'
+      + '<td class="pair">'+escapeHtml(r.pair.replace("USDT",""))
+      +   (r.sqz ? '<span class="sqz" title="Сквиз: низкая волатильность">⚡</span>' : "")
+      +   (r.isNew ? '<span class="fresh">НОВЫЙ</span>' : "")
+      +   '<span class="sub">'+escapeHtml(r.pair)+'</span></td>'
+      + '<td class="num">'+fmtPrice(r.close)
+      +   '<span class="sub '+(r.change>=0?"up":"down")+'">'+(r.change>=0?"+":"")+nf(r.change,2)+'%</span></td>'
+      + tfCell(r,"s15") + tfCell(r,"s60") + tfCell(r,"s240") + tfCell(r,"s1d")
+      + '<td><span class="pill '+b.cls+'">'+b.txt+'</span>'
+      +   '<span class="sub num">счёт '+(r.score>=0?"+":"")+nf(r.score,2)+'</span></td>'
+      + '<td class="num">'+fmtVol(r.volUsd)+' $</td>'
+      + '</tr>';
+    if (isOpen) html += '<tr class="detailrow">' + detailRow(r) + '</tr>';
+  }
+  $("tbody").innerHTML = html;
+}
+
+/* ---------- события ---------- */
+$("tbody").addEventListener("click", e => {
+  const tr = e.target.closest("tr[data-t]");
+  if (!tr) return;
+  state.open = state.open === tr.dataset.t ? null : tr.dataset.t;
+  render();
+});
+document.querySelectorAll("th.sortable").forEach(th => th.addEventListener("click", () => {
+  const k = th.dataset.k;
+  if (state.sortKey === k) state.sortDir *= -1;
+  else { state.sortKey = k; state.sortDir = k === "name" ? 1 : -1; }
+  render();
+}));
+$("refreshBtn").addEventListener("click", refresh);
+$("search").addEventListener("input", render);
+for (const id of ["minScore","atrMult","riskPct","equity"])
+  $(id).addEventListener("input", () => { saveSettings(); render(); });
+$("topN").addEventListener("change", () => { saveSettings(); refresh(); });
+$("interval").addEventListener("change", () => { saveSettings(); scheduleNext(); });
+$("notify").addEventListener("change", () => {
+  saveSettings();
+  if ($("notify").checked && "Notification" in window && Notification.permission === "default")
+    Notification.requestPermission().catch(() => {});
+});
+
+loadSettings();
+refresh();
+</script>
+</body>
+</html>
