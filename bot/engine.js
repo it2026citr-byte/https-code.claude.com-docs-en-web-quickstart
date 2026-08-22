@@ -21,8 +21,8 @@ async function mapLimit(items, n, fn) {
 
 const insertSignal = db.prepare(
   "INSERT OR IGNORE INTO signals" +
-  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol) " +
-  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?)"
+  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol,agree) " +
+  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?,?)"
 );
 
 /**
@@ -61,18 +61,53 @@ export async function scanMarket(strategies, onSignal) {
   const found = [];
 
   await mapLimit(pairs, 6, async (p) => {
+    const fired = [];       // сработавшие стратегии по этой паре
+    const cond = [];        // условия всех стратегий, для показа близости
+
     for (const tf of tfs) {
       // Через кеш: первый обход тянет по 300 свечей, дальше только хвост.
-      // 68 пар раз в 15 минут — это 73 МБ в сутки против 12 МБ с кешем.
       const c = await candles(p.symbol, tf, 300);
       if (c.length < 160) return;
       const i = c.length - 2;                       // последний закрытый бар
       for (const s of strategies) {
         if (s.timeframe !== tf) continue;
         const x = s.prepare(c);
+        const cc = s.conditions ? s.conditions(c, x, i) : null;
+        if (cc) cond.push({ id: s.id, cc });
         const sig = s.evaluate(c, x, i);
-        if (sig) found.push({ ...sig, strategy: s.id, symbol: p.symbol, tf, barTime: c[i].t });
+        if (sig) fired.push({ ...sig, strategy: s.id, tf, barTime: c[i].t });
       }
+    }
+    if (!fired.length) return;
+
+    // Одна пара — один сигнал на сторону. Стратегии, сошедшиеся на входе,
+    // сливаются: берём НАИБОЛЬШЕЕ расстояние до стопа, значит и самые
+    // дальние цели. Позиция при этом меньше — риск на сделку тот же.
+    for (const side of ["long", "short"]) {
+      const same = fired.filter(f => f.side === side);
+      if (!same.length) continue;
+
+      const best = same.reduce((a, b) =>
+        Math.abs(b.sl - b.entry) > Math.abs(a.sl - a.entry) ? b : a);
+
+      const agree = cond.map(({ id, cc }) => {
+        const list = cc[side] ?? [];
+        return {
+          id,
+          hit: list.filter(z => z.ok).length,
+          all: list.length,
+          miss: list.filter(z => !z.ok).map(z => z.n),
+        };
+      }).sort((a, b) => (b.hit / b.all) - (a.hit / a.all));
+
+      found.push({
+        ...best,
+        symbol: p.symbol,
+        strategy: same.map(f => f.strategy).sort().join(" + "),
+        parts: same.map(f => f.strategy),
+        reason: same.map(f => f.reason).join("\n"),
+        agree,
+      });
     }
   });
 
@@ -85,7 +120,8 @@ export async function scanMarket(strategies, onSignal) {
     const vol = await volatility(f.symbol);
     const r = insertSignal.run(f.strategy, f.symbol, f.side, f.tf, f.entry, f.sl,
       JSON.stringify(f.targets), f.reason, now(), f.barTime,
-      vol ? JSON.stringify(vol) : null);
+      vol ? JSON.stringify(vol) : null,
+      f.agree ? JSON.stringify(f.agree) : null);
     if (!r.changes) continue;                       // уже был такой — не дублируем
     const id = Number(r.lastInsertRowid);
     f.vol = vol;

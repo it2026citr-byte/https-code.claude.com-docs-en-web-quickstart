@@ -78,21 +78,39 @@ export default {
     };
   },
 
-  evaluate(c, x, i) {
+  /** Разложенные условия — и для входа, и для показа близости. */
+  conditions(c, x, i) {
     const a = x.atr[i];
     if (a == null || x.cci[i] == null || x.cci[i - 1] == null) return null;
-
     const dir = crossAhead(x.fast, x.slow, i);
-    if (!dir) return null;
-
     const px = c[i].c;
     const cciUp = x.cci[i] > x.cci[i - 1];
-    const long  = dir ===  1 && px > x.fast[i] && px > x.slow[i]
-                  && x.cci[i] < -P.cciEdge && cciUp;
-    const short = dir === -1 && px < x.fast[i] && px < x.slow[i]
-                  && x.cci[i] >  P.cciEdge && !cciUp;
+    return {
+      long: [
+        { n: `крест снизу вверх ≤${P.leadBars} ч`, ok: dir === 1 },
+        { n: "цена над обеими MA", ok: px > x.fast[i] && px > x.slow[i] },
+        { n: "CCI ниже нуля",      ok: x.cci[i] < -P.cciEdge },
+        { n: "CCI разворот вверх", ok: cciUp },
+      ],
+      short: [
+        { n: `крест сверху вниз ≤${P.leadBars} ч`, ok: dir === -1 },
+        { n: "цена под обеими MA", ok: px < x.fast[i] && px < x.slow[i] },
+        { n: "CCI выше нуля",      ok: x.cci[i] > P.cciEdge },
+        { n: "CCI заваливается",   ok: !cciUp },
+      ],
+    };
+  },
+
+  evaluate(c, x, i) {
+    const cond = this.conditions(c, x, i);
+    if (!cond) return null;
+    const long = cond.long.every(z => z.ok);
+    const short = cond.short.every(z => z.ok);
     if (!long && !short) return null;
 
+    const a = x.atr[i];
+    const px = c[i].c;
+    const cciUp = x.cci[i] > x.cci[i - 1];
     const entry = px;
     const lvl = long ? x.str.lastLow[i] : x.str.lastHigh[i];
     const dStr = lvl == null ? null

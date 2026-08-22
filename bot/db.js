@@ -112,6 +112,8 @@ CREATE TABLE IF NOT EXISTS candles (
   const cols = db.prepare("PRAGMA table_info(signals)").all().map(r => r.name);
   // Средний дневной ход за год / 3 месяца / 2 недели, JSON.
   if (!cols.includes("vol")) db.exec("ALTER TABLE signals ADD COLUMN vol TEXT");
+  // Согласие стратегий: сколько условий выполнено у каждой, JSON.
+  if (!cols.includes("agree")) db.exec("ALTER TABLE signals ADD COLUMN agree TEXT");
 }
 
 {

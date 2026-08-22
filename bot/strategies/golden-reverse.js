@@ -47,27 +47,44 @@ export default {
     };
   },
 
-  evaluate(c, x, i) {
+  /** Разложенные условия — и для входа, и для показа близости. */
+  conditions(c, x, i) {
     const a = x.atr[i];
     if (a == null || x.cci[i] == null || x.sqz.mom[i] == null || x.ema[i] == null)
       return null;
+    const px = c[i].c;
+    const momUp = x.sqz.mom[i] > x.sqz.mom[i - 1];
+    const trendUp = px > x.ema[i];
+    const sqzRecent = x.sqz.on.slice(Math.max(0, i - P.sqzWindow), i + 1).some(Boolean);
+    return {
+      long: [
+        { n: "флип UT Bot вверх", ok: x.ut.buy[i] === true },
+        { n: `CCI > ${P.cciMin}`, ok: x.cci[i] > P.cciMin },
+        { n: "моментум растёт",   ok: momUp && x.sqz.mom[i] > 0 },
+        { n: "цена над EMA200",   ok: trendUp },
+        { n: "недавнее сжатие",   ok: sqzRecent },
+      ],
+      short: [
+        { n: "флип UT Bot вниз",  ok: x.ut.sell[i] === true },
+        { n: `CCI < −${P.cciMin}`, ok: x.cci[i] < -P.cciMin },
+        { n: "моментум падает",   ok: !momUp && x.sqz.mom[i] < 0 },
+        { n: "цена под EMA200",   ok: !trendUp },
+        { n: "недавнее сжатие",   ok: sqzRecent },
+      ],
+    };
+  },
 
+  evaluate(c, x, i) {
+    const cond = this.conditions(c, x, i);
+    if (!cond) return null;
+    const long = cond.long.every(z => z.ok);
+    const short = cond.short.every(z => z.ok);
+    if (!long && !short) return null;
+
+    const a = x.atr[i];
     const entryPx = c[i].c;
     const momUp = x.sqz.mom[i] > x.sqz.mom[i - 1];
     const trendUp = entryPx > x.ema[i];
-
-    // Пять условий, все обязательны.
-    const long  = x.ut.buy[i]  && x.cci[i] >  P.cciMin && momUp  && trendUp
-                  && x.sqz.mom[i] > 0;
-    const short = x.ut.sell[i] && x.cci[i] < -P.cciMin && !momUp && !trendUp
-                  && x.sqz.mom[i] < 0;
-    if (!long && !short) return null;
-
-    // Сжатие должно было быть в недавнем прошлом: входим на выходе из него,
-    // а не посреди безадресной болтанки.
-    const from = Math.max(0, i - P.sqzWindow);
-    if (!x.sqz.on.slice(from, i + 1).some(Boolean)) return null;
-
     const side = long ? "long" : "short";
     const entry = entryPx;
 

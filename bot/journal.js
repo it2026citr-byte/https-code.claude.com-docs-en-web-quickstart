@@ -114,6 +114,23 @@ function volBlock(vol) {
   return ` ⟨1г ${y} · 3м ${v1(v.q)} · 2н ${v1(v.w)}⟩ `;
 }
 
+/** Насколько остальные стратегии близки к тому же выводу. */
+function agreeBlock(raw) {
+  const a = typeof raw === "string"
+    ? (() => { try { return JSON.parse(raw); } catch { return null; } })()
+    : raw;
+  if (!Array.isArray(a) || !a.length) return "";
+  const rows = a.map(z => {
+    const full = z.hit === z.all;
+    const bar = "▰".repeat(z.hit) + "▱".repeat(Math.max(0, z.all - z.hit));
+    const miss = full ? "" :
+      `\n   <i>нет: ${z.miss.slice(0, 2).join(", ")}` +
+      `${z.miss.length > 2 ? ` и ещё ${z.miss.length - 2}` : ""}</i>`;
+    return `${full ? "✅" : "▫️"} ${bar} <b>${z.hit}/${z.all}</b> ${z.id}${miss}`;
+  });
+  return `\n\n<b>Согласие стратегий</b>\n${rows.join("\n")}`;
+}
+
 export function signalCard(s) {
   const long = s.side === "long";
   const pct = Math.abs(s.sl - s.entry) / s.entry * 100;
@@ -123,7 +140,7 @@ export function signalCard(s) {
     `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)`,
     `Цели ${s.targets.map(fmtPrice).join(" · ")}`,
     `<i>${s.reason}</i>`,
-  ].join("\n");
+  ].join("\n") + agreeBlock(s.agree);
 }
 
 export function digest(rows, title) {
