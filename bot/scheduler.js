@@ -1,5 +1,6 @@
 import { cfg, log } from "./config.js";
 import { getMode, MODE_FOCUS, openPositions, getSetting, setSetting } from "./db.js";
+import { num, reportHourUtc } from "./runtime.js";
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -16,10 +17,12 @@ function msToNextBoundary(minutes, graceSec = 5) {
  *   watchTick — присмотр за взятыми сделками. В фокусе каждые 10 секунд,
  *               вне фокуса — вместе со сканом.
  */
-export function startLoops({ scanTick, watchTick }) {
+export function startLoops({ scanTick, watchTick, pulseTick }) {
+  // Интервалы читаются на каждом витке: правка из Telegram применяется
+  // со следующего такта, перезапускать бота не нужно.
   (async function scanLoop() {
     for (;;) {
-      await sleep(msToNextBoundary(cfg.scanIntervalMin));
+      await sleep(msToNextBoundary(num("scan_min")));
       if (getMode() === MODE_FOCUS) {
         log("фокус: скан рынка пропущен");
         continue;
@@ -39,8 +42,20 @@ export function startLoops({ scanTick, watchTick }) {
       try { await watchTick({ focus }); }
       catch (e) { log("присмотр сорвался:", e.message); }
 
-      await sleep(focus ? cfg.focusIntervalSec * 1000
-                        : msToNextBoundary(cfg.normalWatchMin));
+      await sleep(focus ? num("focus_sec") * 1000
+                        : msToNextBoundary(num("watch_min")));
+    }
+  })();
+
+  // Пульс живёт своим ритмом, не привязан к скану. Ноль — выключен.
+  (async function pulseLoop() {
+    for (;;) {
+      const m = num("pulse_min");
+      if (m <= 0) { await sleep(60_000); continue; }
+      await sleep(msToNextBoundary(m));
+      if (num("pulse_min") <= 0) continue;      // успели выключить, пока спали
+      try { await pulseTick(); }
+      catch (e) { log("пульс сорвался:", e.message); }
     }
   })();
 }
@@ -56,7 +71,7 @@ export function startReports({ onDaily, onMonthly }) {
         const d = new Date();
         const day = d.toISOString().slice(0, 10);
         const month = d.toISOString().slice(0, 7);
-        const past = d.getUTCHours() >= cfg.reportHourUtc;
+        const past = d.getUTCHours() >= reportHourUtc();
 
         // Дневная сводка за сегодня — после назначенного часа, один раз в день.
         if (past && getSetting("last_daily") !== day) {
@@ -73,6 +88,18 @@ export function startReports({ onDaily, onMonthly }) {
         }
       } catch (e) { log("отчёт не собрался:", e.message); }
       await sleep(60_000);
+    }
+  })();
+
+  // Пульс живёт своим ритмом, не привязан к скану. Ноль — выключен.
+  (async function pulseLoop() {
+    for (;;) {
+      const m = num("pulse_min");
+      if (m <= 0) { await sleep(60_000); continue; }
+      await sleep(msToNextBoundary(m));
+      if (num("pulse_min") <= 0) continue;      // успели выключить, пока спали
+      try { await pulseTick(); }
+      catch (e) { log("пульс сорвался:", e.message); }
     }
   })();
 }

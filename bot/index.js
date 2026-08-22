@@ -8,6 +8,7 @@ import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
 import { topPairs } from "./data/tradingview.js";
 import { prices, lastPrice } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt } from "./monitor.js";
+import { PARAMS, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
 import { loadStrategies } from "./strategies/index.js";
 import { scanMarket } from "./engine.js";
 import { startLoops, startReports } from "./scheduler.js";
@@ -48,11 +49,15 @@ async function scanTick() {
   log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, выдано ${r.signals}, ` +
       `${((Date.now() - t0) / 1000).toFixed(1)}с`);
 
-  if (getSetting("pulse", "0") === "1" && !r.signals) {
-    const top = await topPairs(3);
-    await broadcast(`📊 ${top.map(x => `${x.symbol.replace("USDT","")} ${fmtPrice(x.close)} (${fmtPct(x.change)})`).join(" · ")}` +
-      `\n<i>${r.pairs} пар · кандидатов ${r.candidates} · сигналов нет</i>`);
-  }
+}
+
+/** Пульс: короткая сводка по рынку, живёт своим интервалом. */
+async function pulseTick() {
+  const top = await topPairs(3);
+  const pos = openPositions().length;
+  await broadcast(
+    `📊 ${top.map(x => `${x.symbol.replace("USDT","")} ${fmtPrice(x.close)} (${fmtPct(x.change)})`).join(" · ")}` +
+    `\n<i>вселенная ${getSetting("universe_size","—")} пар · в работе ${pos}</i>`);
 }
 
 async function watchTick({ focus }) {
@@ -70,6 +75,35 @@ export async function postUpdate(positionId, text, keyboard = null) {
   const p = db.prepare("SELECT * FROM positions WHERE id = ?").get(positionId);
   if (!p) return null;
   return send(p.chat_id, text, keyboard, p.msg_id || null);
+}
+
+// --- настройки ------------------------------------------------------------
+function settingsView() {
+  const rows = Object.keys(PARAMS)
+    .map(k => `<b>${PARAMS[k].title}:</b> ${fmtVal(k)}`);
+  const utc = String(reportHourUtc()).padStart(2, "0");
+  return [
+    "⚙️ <b>Настройки</b>", "",
+    ...rows, "",
+    `<i>Дневной отчёт уходит в ${utc}:00 UTC. Правка применяется`,
+    `со следующего такта — перезапускать бота не нужно.</i>`,
+  ].join("\n");
+}
+
+function settingsKeyboard() {
+  const kb = [];
+  for (const [key, p] of Object.entries(PARAMS)) {
+    const cur = num(key);
+    kb.push([{ text: `— ${p.title} —`, callback_data: "noop" }]);
+    kb.push(p.opts.map(v => ({
+      text: (v === cur ? "• " : "") +
+            (key === "tz" ? `+${v}` :
+             key === "report_hour" ? `${v}:00` :
+             v === 0 ? "выкл" : `${v}`),
+      callback_data: `cfg:${key}:${v}`,
+    })));
+  }
+  return kb;
 }
 
 // --- отчёты -----------------------------------------------------------------
@@ -101,7 +135,8 @@ const HELP = `<b>Что я умею</b>
 /status — режим, что вижу на рынке, открытые сделки
 /focus — бросить всё и следить только за взятыми сделками
 /scan — вернуться к поиску новых монет
-/pulse — включить/выключить сводку раз в 15 минут
+/pulse — включить/выключить сводку по рынку
+/settings — интервалы скана, пульса, присмотра и час отчёта
 
 /positions — открытые сделки, текущий результат, закрыть вручную
 
@@ -113,7 +148,7 @@ const HELP = `<b>Что я умею</b>
 /help — это сообщение
 
 <i>Telegram понимает только латиницу в командах, но я отзываюсь и на русские:
-/статус /фокус /скан /пульс /сделки /итоги /журнал /стата /доступ /помощь</i>
+/статус /фокус /скан /пульс /настройки /сделки /итоги /журнал /стата /доступ /помощь</i>
 
 <i>Сигналы приходят карточкой с кнопками «Взял» и «Пропустил».
 По взятой сделке вся история — ниткой ответов под карточкой:
@@ -132,6 +167,7 @@ async function statusText() {
     `<b>Стратегий:</b> ${STRATEGIES.length ? STRATEGIES.map(s => s.id).join(", ") : "нет"}`,
     `<b>Открытых сделок:</b> ${pos.length}`,
     `<b>Работаю без перерыва:</b> ${fmtAgo(now() - STARTED)}`,
+    `<b>Скан:</b> ${fmtVal("scan_min")} · <b>пульс:</b> ${fmtVal("pulse_min")}`,
   ];
   if (pos.length) {
     lines.push("", "<b>В работе:</b>");
@@ -241,11 +277,17 @@ async function onMessage(msg) {
       break;
 
     case "/pulse": case "/пульс": {
-      const on = getSetting("pulse", "1") === "1";
-      setSetting("pulse", on ? "0" : "1");
-      await send(chatId, on ? "Пульс выключен." : "Пульс включён — сводка раз в 15 минут.");
+      const on = num("pulse_min") > 0;
+      setNum("pulse_min", on ? 0 : 60);
+      await send(chatId, on
+        ? "Пульс выключен. Точная настройка — /settings"
+        : "Пульс включён, раз в 60 минут. Изменить — /settings");
       break;
     }
+
+    case "/settings": case "/настройки":
+      await send(chatId, settingsView(), settingsKeyboard());
+      break;
     case "/positions": case "/сделки": {
       const ps = openPositions();
       if (!ps.length) { await send(chatId, "Открытых сделок нет."); break; }
@@ -337,6 +379,19 @@ async function onMessage(msg) {
 async function onCallback(q) {
   const chatId = q.message?.chat?.id;
   const [act0] = String(q.data || "").split(":");
+
+  if (act0 === "noop") { await answerCallback(q.id); return; }
+
+  if (act0 === "cfg") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
+    const [, key, raw] = String(q.data).split(":");
+    if (!PARAMS[key]) { await answerCallback(q.id, "Неизвестный параметр"); return; }
+    setNum(key, Number(raw));
+    logEvent({ kind: "note", text: `настройка ${key} = ${raw}` });
+    await answerCallback(q.id, `${PARAMS[key].title}: ${fmtVal(key)}`);
+    await editText(chatId, q.message.message_id, settingsView(), settingsKeyboard());
+    return;
+  }
 
   // Решения по доступу принимает только владелец.
   if (act0 === "grant" || act0 === "deny" || act0 === "revoke") {
@@ -463,7 +518,8 @@ async function main() {
     { command: "status", description: "режим и открытые сделки" },
     { command: "focus",  description: "следить только за взятыми сделками" },
     { command: "scan",   description: "искать новые точки входа" },
-    { command: "pulse",  description: "сводка раз в 15 минут" },
+    { command: "pulse",  description: "включить/выключить сводку по рынку" },
+    { command: "settings", description: "интервалы скана, пульса, отчётов" },
     { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },
@@ -487,7 +543,7 @@ async function main() {
   // Повторные сигналы не продублируются — ключ по времени бара.
   await scanTick().catch(e => log("первый скан не удался:", e.message));
   logEvent({ kind: "note", text: `бот запущен, стратегий ${STRATEGIES.length}` });
-  startLoops({ scanTick, watchTick });
+  startLoops({ scanTick, watchTick, pulseTick });
   startReports({ onDaily, onMonthly });
   await startPolling({ onMessage, onCallback });
 }
