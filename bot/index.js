@@ -250,7 +250,9 @@ async function statusText(withHealth = true) {
   const lines = [
     `<b>Режим:</b> ${mode === MODE_FOCUS ? "🎯 фокус на сделках" : "🔍 скан рынка"}`,
     `<b>Рынок видел:</b> ${seen ? fmtAgo(now() - seen) + " назад" : "ещё нет"}`,
-    `<b>Вселенная:</b> ${uni} пар MEXC/USDT дороже ${fmtUsd(cfg.minTurnoverUsd)} $ оборота`,
+    `<b>Вселенная:</b> ${uni} пар · порог ${fmtVal("min_turn_k")}` +
+      ` <i>(в пересчёте на прошедшую часть суток ${fmtUsd(num("min_turn_k") * 1000 *
+        Math.max(0.02, (Date.now() % 86_400_000) / 86_400_000))} $)</i>`,
     `<b>Стратегий:</b> ${STRATEGIES.length ? STRATEGIES.map(s => s.id).join(", ") : "нет"}`,
     `<b>Открытых сделок:</b> ${pos.length}`,
     `<b>Работаю без перерыва:</b> ${fmtAgo(now() - STARTED)}`,
