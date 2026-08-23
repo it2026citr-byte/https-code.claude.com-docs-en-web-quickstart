@@ -25,7 +25,7 @@ async function scan(body) {
  * объём считается в контрактах, и оборот в долларах по нему не восстановить.
  */
 let perpCache = { at: 0, set: null };
-async function perpetuals() {
+export async function perpetuals() {
   if (perpCache.set && Date.now() - perpCache.at < 6 * 3600_000) return perpCache.set;
   try {
     const j = await scan({

@@ -1,6 +1,7 @@
 import { db, now } from "./db.js";
 import { log } from "./config.js";
 import { deepHistory, pairExists } from "./data/mexc.js";
+import { checkTradable } from "./data/tradable.js";
 import { num } from "./runtime.js";
 
 db.exec(`
@@ -162,6 +163,9 @@ export async function candlesFor(symbol, strategy, months = 6) {
 
 export async function check(symbol) {
   if (!await pairExists(symbol)) return "нет такой пары на MEXC";
+  // Работаем только по бессрочным фьючерсам криптовалют.
+  const bad = await checkTradable(symbol).catch(() => null);
+  if (bad) return bad;
   // Молодую монету не отсекаем — её разберём на мелких свечах.
   // Отказываем только если свечей нет вовсе.
   const probe = await deepHistory(symbol, "5m", 500).catch(() => []);

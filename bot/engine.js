@@ -8,6 +8,7 @@ import { logEvent } from "./journal.js";
 import { num } from "./runtime.js";
 import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
+import { rejectReason } from "./data/tradable.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 async function mapLimit(items, n, fn) {
@@ -66,15 +67,28 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   const onlyList = num("only_list") === 1;
   const auto = onlyList ? [] : await topPairs();
   const seen = new Set(auto.map(p => p.symbol));
-  const pairs = [...auto, ...manual.filter(s => !seen.has(s)).map(s => ({ symbol: s }))];
-  if (!pairs.length) { log("сканировать нечего: список пуст и автоподбор выключен"); return { pairs: 0, signals: 0 }; }
+  const raw = [...auto, ...manual.filter(s => !seen.has(s)).map(s => ({ symbol: s }))];
+  if (!raw.length) { log("сканировать нечего: список пуст и автоподбор выключен"); return { pairs: 0, signals: 0 }; }
   const tfs = [...new Set(strategies.map(s => s.timeframe))];
   const found = [];
   const watching = [];
 
-  // Ставки финансирования нужны стратегии Funding-Impulse. Тянем один
-  // раз на скан: биржа отдаёт все контракты сразу.
-  if (strategies.some(s => s.needsFutures)) await refreshFunding();
+  // Список контрактов нужен и стратегии на ставке, и отсеву пар:
+  // торгуем только бессрочные фьючерсы криптовалют.
+  await refreshFunding();
+
+  // Автоподбор фьючерсы уже отфильтровал, а монеты из моего списка —
+  // нет: пару могли добавить давно или снять с фьючерсов после.
+  const dropped = [];
+  const pairs = raw.filter(p => {
+    const why = rejectReason(p.symbol);
+    if (why) { dropped.push(`${p.symbol} — ${why}`); return false; }
+    return true;
+  });
+  if (dropped.length)
+    log(`не по фьючерсам, пропускаю ${dropped.length}: ${dropped.slice(0, 3).join("; ")}` +
+        (dropped.length > 3 ? " и др." : ""));
+  if (!pairs.length) { log("после отсева не осталось пар"); return { pairs: 0, signals: 0 }; }
 
   await mapLimit(pairs, 6, async (p) => {
     const fired = [];       // сработавшие стратегии по этой паре

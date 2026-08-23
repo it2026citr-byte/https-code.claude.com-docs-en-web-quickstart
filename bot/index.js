@@ -16,6 +16,7 @@ import * as WL from "./watchlist.js";
 import { tuneStrategy } from "./tune.js";
 import * as ZN from "./zones.js";
 import * as PZ from "./data/prizrak.js";
+import { checkTradable, rejectReason } from "./data/tradable.js";
 import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
@@ -191,24 +192,50 @@ async function zoneTick() {
   }
   const far = num("zone_far_share") / 100, near = num("zone_near_share") / 100;
 
-  for (const ev of ZN.check(px, { vol, farShare: far, nearShare: near })) {
+  await checkTradable("BTCUSDT").catch(() => null);
+
+  // Собираем события по монете: три уровня по одной монете не должны
+  // приходить тремя сообщениями подряд.
+  const events = ZN.check(px, { vol, farShare: far, nearShare: near })
+    .filter(ev => {
+      // Зона могла быть заведена до того, как пара лишилась фьючерса.
+      const why = rejectReason(ev.zone.symbol);
+      if (why) { log(`зона ${ev.zone.symbol} пропущена: ${why}`); return false; }
+      return true;
+    });
+
+  // Подходы к зонам — одним сообщением на монету. Входы разбираем по
+  // отдельности: там сигнал со своими кнопками.
+  const nears = new Map();
+  for (const ev of events) {
+    if (ev.kind !== "near" && ev.kind !== "close") continue;
+    const k = ev.zone.symbol;
+    if (!nears.has(k)) nears.set(k, []);
+    nears.get(k).push(ev);
+  }
+  for (const [sym, list] of nears) {
+    const soon = list.some(e => e.kind === "close");
+    const lines = list
+      .sort((a, b) => a.distPct - b.distPct)
+      .map(e => {
+        const z = e.zone, long = z.side === "long";
+        const share = e.dayPct ? ` — ${(e.share * 100).toFixed(0)}% дневного хода` : "";
+        return `${long ? "🟢" : "🔴"} ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} · ` +
+               `до границы ${e.distPct.toFixed(2)}%${share}` +
+               `${z.armed ? "" : " · <i>не принята</i>"}`;
+      });
+    const day = list.find(e => e.dayPct)?.dayPct;
+    await broadcast(
+      `${soon ? "🟠" : "🟡"} <b>${soon ? "Цена вплотную к зоне" : "Цена подходит к зоне"}</b>\n` +
+      `<b>${esc(sym)}</b> · ${fmtPrice(list[0].price)}` +
+      `${day ? ` · дневной ход ${day.toFixed(1)}%` : ""}\n` +
+      lines.join("\n"));
+  }
+
+  for (const ev of events) {
+    if (ev.kind !== "enter") continue;
     const z = ev.zone;
     const long = z.side === "long";
-    if (ev.kind === "near" || ev.kind === "close") {
-      const soon = ev.kind === "close";
-      const howFar = ev.dayPct
-        ? `${ev.distPct.toFixed(2)}% — это ${(ev.share * 100).toFixed(0)}% ` +
-          `дневного хода (${ev.dayPct.toFixed(1)}%)`
-        : `${ev.distPct.toFixed(2)}%`;
-      await broadcast(
-        `${soon ? "🟠" : "🟡"} <b>${soon ? "Цена вплотную к зоне" : "Цена подходит к зоне"}</b>\n` +
-        `${esc(z.symbol)} · ${long ? "лонг" : "шорт"} ` +
-        `${fmtPrice(z.lo)}–${fmtPrice(z.hi)}${z.armed ? "" : " · <i>не принята</i>"}\n` +
-        `Сейчас ${fmtPrice(ev.price)} · до границы ${howFar}\n` +
-        `<i>${esc(z.note ?? "")}</i>`);
-      continue;
-    }
-
     // Монета уже в работе — зона не должна звать зайти второй раз.
     const held = db.prepare(
       "SELECT * FROM positions WHERE symbol=? AND status='open'").get(z.symbol);
@@ -819,12 +846,16 @@ async function onMessage(msg) {
 
         let added = 0, noPair = 0, far = 0, dup = 0, done = 0;
         const seen = new Set();
+        await checkTradable("BTCUSDT").catch(() => null);   // подтянуть список контрактов
+        let notFut = 0;
         for (const r of rows) {
           const owner = pick(r);
           if (!owner) { noPair++; continue; }
           const sym = owner + "USDT";
           const p = px[sym];
           if (p == null) { noPair++; continue; }
+          // Только бессрочные фьючерсы криптовалют.
+          if (rejectReason(sym)) { notFut++; continue; }
           const side = r.hi < p ? "long" : r.lo > p ? "short" : null;
           if (!side) { far++; continue; }         // цена внутри зоны — уже поздно
           const away = (side === "long" ? p - r.hi : r.lo - p) / p * 100;
@@ -859,6 +890,7 @@ async function onMessage(msg) {
           `✅ Добавлено: <b>${added}</b> — цена туда ещё не приходила\n` +
           `▫️ Уже отработаны, цена там побывала: ${done}\n` +
           `▫️ Нет пары на бирже: ${noPair}\n` +
+          `▫️ Без фьючерса, акции, стейблы: ${notFut}\n` +
           `▫️ Цена внутри зоны или дальше 30%: ${far}\n` +
           `▫️ Повторы: ${dup}\n\n` +
           `<i>Добавлены как непринятые: посмотри <code>/zones</code> и прими ` +
@@ -892,20 +924,40 @@ async function onMessage(msg) {
             "Или задать вручную: <code>/zone SOLUSDT long 81 82.1</code>");
         break;
       }
-      await send(chatId, `🎯 <b>Зоны${arg ? " · " + esc(arg) : ""} — ${list.length}</b>\n` +
-        `<i>Бот следит за ценой и сигналит при подходе и входе в зону.</i>`);
+      // Одно сообщение на монету: по три карточки на каждую чат не читается.
+      const byCoin = new Map();
       for (const z of list) {
+        if (!byCoin.has(z.symbol)) byCoin.set(z.symbol, []);
+        byCoin.get(z.symbol).push(z);
+      }
+      await send(chatId,
+        `🎯 <b>Зоны${arg ? " · " + esc(arg) : ""} — ${list.length}</b> ` +
+        `по ${byCoin.size} монет${byCoin.size === 1 ? "е" : "ам"}\n` +
+        `<i>Слежу за ценой и сигналю при подходе и входе в зону.</i>`);
+
+      for (const [sym, zs] of byCoin) {
+        let px = null;
+        try { px = await lastPrice(sym); } catch { /* обойдёмся без цены */ }
+        const lines = zs.map(z => {
+          const away = px ? Math.abs((z.side === "long" ? px - z.hi : z.lo - px)) / px * 100 : null;
+          return `${z.side === "long" ? "🟢" : "🔴"} <b>${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}</b>` +
+            (away != null ? ` · ${away.toFixed(1)}% от цены` : "") +
+            `${z.armed ? "" : " · <i>не принята</i>"}\n` +
+            `   <i>№${z.id} · ${esc(z.note ?? "")}</i>`;
+        });
+        const kb = [];
+        for (const z of zs) {
+          kb.push(z.armed
+            ? [{ text: `🗑 №${z.id}`, callback_data: `zdel:${z.id}` },
+               { text: `🔄 №${z.id}`, callback_data: `zarm:${z.id}` }]
+            : [{ text: `✅ Принять №${z.id}`, callback_data: `zok:${z.id}` },
+               { text: `🗑 №${z.id}`, callback_data: `zdel:${z.id}` }]);
+        }
+        if (zs.length > 1)
+          kb.push([{ text: `🗑 Убрать все по ${sym.replace("USDT", "")}`,
+                     callback_data: `zdelall:${sym}` }]);
         await send(chatId,
-          `${z.side === "long" ? "🟢 ЛОНГ" : "🔴 ШОРТ"} <b>${esc(z.symbol)}</b>\n` +
-          `${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}\n` +
-          `<i>${esc(z.note ?? "")}${z.source === "auto" ? " · построена ботом" : " · задана вручную"}</i>\n` +
-          (z.armed ? `<b>Принята</b> — даёт сигнал`
-                   : `<b>Не принята</b> — только пометка при входе цены`),
-          z.armed
-            ? [[{ text: "🗑 Убрать", callback_data: `zdel:${z.id}` },
-                { text: "🔄 Сбросить срабатывание", callback_data: `zarm:${z.id}` }]]
-            : [[{ text: "✅ Принять", callback_data: `zok:${z.id}` },
-                { text: "🗑 Убрать", callback_data: `zdel:${z.id}` }]]);
+          `<b>${esc(sym)}</b>${px ? ` · ${fmtPrice(px)}` : ""}\n` + lines.join("\n"), kb);
       }
       break;
     }
@@ -943,6 +995,12 @@ async function onMessage(msg) {
       }
       if (!await pairExists(sym)) {
         await send(chatId, `<b>${esc(sym)}</b> — такой пары на бирже нет.`);
+        break;
+      }
+      const nope = await checkTradable(sym).catch(() => null);
+      if (nope) {
+        await send(chatId, `<b>${esc(sym)}</b> — ${esc(nope)}.\n` +
+          `<i>Сигналы даю только по бессрочным фьючерсам криптовалют.</i>`);
         break;
       }
       const id = ZN.add({ symbol: sym, side, lo, hi,
@@ -1075,6 +1133,17 @@ async function onCallback(q) {
     const grp = GROUPS[g] ? g : PARAMS[key].g;
     await answerCallback(q.id, `${PARAMS[key].title}: ${fmtVal(key)}`);
     await editText(chatId, q.message.message_id, settingsView(grp), settingsKeyboard(grp));
+    return;
+  }
+
+  if (act0 === "zdelall") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
+    const sym = String(q.data).split(":")[1];
+    const n = ZN.removeSymbol(sym);
+    logEvent({ kind: "note", symbol: sym, text: `убраны все зоны (${n})` });
+    await answerCallback(q.id, `Убрано зон: ${n}`);
+    await editText(chatId, q.message.message_id,
+      `🗑 <b>${esc(sym)}</b> · убраны все зоны (${n})`);
     return;
   }
 

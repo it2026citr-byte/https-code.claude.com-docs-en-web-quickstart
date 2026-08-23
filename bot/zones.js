@@ -184,7 +184,15 @@ function roundLevels(px) {
 export const WEIGHTS = { box: 2, swing: 1, vol: 1, round: 1, touch: 0 };
 
 export function propose(c, opts = {}) {
-  const { maxZones = 6, minScore = 3, nearPct = 0.5, trend = true } = opts;
+  const {
+    maxZones = 6, minScore = 3, nearPct = 0.5, trend = true,
+    // Ширина зоны меряется в ATR, потому что в процентах цены она для
+    // разных монет значит разное. Уже половины ATR — это не зона, а
+    // линия: цена проскакивает её за одну свечу, и ждать там нечего.
+    // Шире трёх ATR — уже не уровень, а диапазон, стоп за его границей
+    // получается такой, что сделка теряет смысл.
+    minWidthAtr = 0.5, maxWidthAtr = 3,
+  } = opts;
   const W = { ...WEIGHTS, ...(opts.weights || {}) };
   const A = atr(c, 14);
   const i = c.length - 2;
@@ -244,8 +252,16 @@ export function propose(c, opts = {}) {
     // Зона от боковика берёт его границы — так рисует и он.
     // Одиночный уровень обрастает половиной ATR.
     let lo, hi;
-    if (z.box && (z.box.hi - z.box.lo) / px * 100 <= 9) { lo = z.box.lo; hi = z.box.hi; }
+    if (z.box && (z.box.hi - z.box.lo) <= maxWidthAtr * a) { lo = z.box.lo; hi = z.box.hi; }
     else { lo = z.lvl - 0.25 * a; hi = z.lvl + 0.25 * a; }
+
+    // Слишком узкую расширяем до разумного, слишком широкую отбрасываем:
+    // растянутый боковик не превратить в уровень, обрезав его.
+    if (hi - lo > maxWidthAtr * a) continue;
+    if (hi - lo < minWidthAtr * a) {
+      const mid = (lo + hi) / 2, half = minWidthAtr * a / 2;
+      lo = mid - half; hi = mid + half;
+    }
     if (side === "long" && hi >= px) continue;
     if (side === "short" && lo <= px) continue;
 
@@ -266,9 +282,15 @@ export function propose(c, opts = {}) {
   for (const z of out.sort((x, y) => (y.score - x.score) || (Number(x.away) - Number(y.away)))) {
     const same = uniq.find(u => {
       if (u.side !== z.side) return false;
+      // Центры ближе одного ATR — это один уровень, как бы ни
+      // расходились края. Раньше по TRX выходило три зоны в шести сотых
+      // процента друг от друга: перекрытия не набиралось, и каждая
+      // считалась отдельной.
+      const mid = (x) => (x.lo + x.hi) / 2;
+      if (Math.abs(mid(u) - mid(z)) < 1.0 * a) return true;
       const lo = Math.max(u.lo, z.lo), hi = Math.min(u.hi, z.hi);
       if (hi <= lo) return false;
-      return (hi - lo) / Math.min(u.hi - u.lo, z.hi - z.lo) > 0.5;
+      return (hi - lo) / Math.min(u.hi - u.lo, z.hi - z.lo) > 0.4;
     });
     if (!same) uniq.push(z);
   }
