@@ -36,6 +36,7 @@ CREATE INDEX IF NOT EXISTS zones_sym ON zones(symbol, active);
 // что автоматический уровень не лучше случайного. Сигнал даёт только
 // зона, которую человек посмотрел и принял.
 try { db.exec("ALTER TABLE zones ADD COLUMN armed INTEGER NOT NULL DEFAULT 0"); } catch {}
+try { db.exec("ALTER TABLE zones ADD COLUMN close_at INTEGER"); } catch {}
 try { db.exec("UPDATE zones SET armed=1 WHERE source='manual' AND armed=0"); } catch {}
 
 export const all = () =>
@@ -65,14 +66,14 @@ export function edit(id, { lo, hi, note }) {
   const z = get(id);
   if (!z) return false;
   const a = lo ?? z.lo, b = hi ?? z.hi;
-  db.prepare("UPDATE zones SET lo=?, hi=?, note=?, near_at=NULL, fired_at=NULL WHERE id=?")
+  db.prepare("UPDATE zones SET lo=?, hi=?, note=?, near_at=NULL, close_at=NULL, fired_at=NULL WHERE id=?")
     .run(Math.min(a, b), Math.max(a, b), note ?? z.note, id);
   return true;
 }
 
 /** Сбросить отметки, чтобы зона снова могла сработать. */
 export const rearm = (id) =>
-  db.prepare("UPDATE zones SET near_at=NULL, fired_at=NULL WHERE id=?").run(id);
+  db.prepare("UPDATE zones SET near_at=NULL, close_at=NULL, fired_at=NULL WHERE id=?").run(id);
 
 /**
  * Кандидаты в зоны по истории.
@@ -286,27 +287,50 @@ export function propose(c, opts = {}) {
  *   near  — цена подошла ближе чем на nearPct к границе
  *   enter — цена вошла в зону
  */
-export function check(prices, { nearPct = 1.5, cooldownH = 12 } = {}) {
+export function check(prices, opts = {}) {
+  const {
+    // Порог измеряется не в процентах цены, а в долях среднедневного
+    // размаха монеты. Один процент для спокойной монеты — целый день
+    // хода, а для резвой — четверть часа, и общий порог в процентах
+    // одну заливает сообщениями, а по другой опаздывает.
+    farShare = 0.29, nearShare = 0.10,
+    vol = {}, fallbackPct = 1.5, cooldownH = 12,
+  } = opts;
   const events = [];
   const t = now();
   for (const z of all()) {
     const px = prices[z.symbol];
     if (px == null) continue;
 
+    const dayPct = vol[z.symbol];
+    const far  = dayPct ? dayPct * farShare  : fallbackPct;
+    const near = dayPct ? dayPct * nearShare : fallbackPct / 3;
+
     const inside = px >= z.lo && px <= z.hi;
     const edge = z.side === "long" ? z.hi : z.lo;
     const distPct = Math.abs(px - edge) / px * 100;
-    const approaching = !inside &&
-      (z.side === "long" ? px > z.hi : px < z.lo) && distPct <= nearPct;
+    const toward = z.side === "long" ? px > z.hi : px < z.lo;
 
     if (inside) {
       if (z.fired_at && t - z.fired_at < cooldownH * 3600) continue;
       db.prepare("UPDATE zones SET fired_at=? WHERE id=?").run(t, z.id);
-      events.push({ kind: "enter", zone: z, price: px });
-    } else if (approaching) {
+      events.push({ kind: "enter", zone: z, price: px, dayPct });
+      continue;
+    }
+    if (!toward) continue;
+
+    // Два рубежа: дальний предупреждает заранее, ближний означает
+    // «вот-вот». Каждый срабатывает один раз — своя отметка в базе.
+    if (distPct <= near) {
+      if (z.close_at && t - z.close_at < cooldownH * 3600) continue;
+      db.prepare("UPDATE zones SET close_at=? WHERE id=?").run(t, z.id);
+      events.push({ kind: "close", zone: z, price: px, distPct, dayPct,
+                    share: dayPct ? distPct / dayPct : null });
+    } else if (distPct <= far) {
       if (z.near_at && t - z.near_at < cooldownH * 3600) continue;
       db.prepare("UPDATE zones SET near_at=? WHERE id=?").run(t, z.id);
-      events.push({ kind: "near", zone: z, price: px, distPct });
+      events.push({ kind: "near", zone: z, price: px, distPct, dayPct,
+                    share: dayPct ? distPct / dayPct : null });
     }
   }
   return events;

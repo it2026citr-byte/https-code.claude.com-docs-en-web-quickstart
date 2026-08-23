@@ -4,10 +4,10 @@ import {
   db, now, getSetting, setSetting, upsertUser, openPositions,
   getUser, setRole, listUsers, getMode, setMode, MODE_SCAN, MODE_FOCUS,
 } from "./db.js";
-import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
+import { api, send, sendLong, sendDoc, sendPhoto, broadcast, broadcastDoc, editText,
          answerCallback, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
-import { prices, lastPrice, deepHistory } from "./data/mexc.js";
+import { prices, lastPrice, deepHistory, pairExists } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt, alertOnce } from "./monitor.js";
 import { candles } from "./candles.js";
 import { atr } from "./indicators.js";
@@ -125,21 +125,56 @@ async function pulseTick() {
     `\n<i>вселенная ${getSetting("universe_size","—")} пар · в работе ${pos}</i>`);
 }
 
+/**
+ * Среднедневной размах монеты, в процентах. Кешируется на шесть часов:
+ * величина медленная, а дёргать биржу на каждом такте незачем.
+ */
+const dayVol = new Map();
+async function dailyVol(symbol) {
+  const hit = dayVol.get(symbol);
+  if (hit && Date.now() - hit.at < 6 * 3600_000) return hit.v;
+  let v = null;
+  try {
+    const d = await deepHistory(symbol, "1d", 40);
+    if (d.length >= 10) {
+      const s = d.slice(-30);
+      v = s.reduce((a, c) => a + (c.h - c.l) / c.c, 0) / s.length * 100;
+    }
+  } catch { /* без волатильности возьмём запасной порог */ }
+  dayVol.set(symbol, { at: Date.now(), v });
+  return v;
+}
+
 async function zoneTick() {
   const syms = ZN.symbols();
   if (!syms.length) return;
   let px;
   try { px = await prices(syms); } catch { return; }
 
-  for (const ev of ZN.check(px)) {
+  // Порог подхода — доля среднедневного размаха монеты, а не общий
+  // процент: иначе резвую монету бот заливает сообщениями, а по
+  // спокойной опаздывает.
+  const vol = {};
+  for (const s of syms) {
+    const v = await dailyVol(s);
+    if (v) vol[s] = v;
+  }
+  const far = num("zone_far_share") / 100, near = num("zone_near_share") / 100;
+
+  for (const ev of ZN.check(px, { vol, farShare: far, nearShare: near })) {
     const z = ev.zone;
     const long = z.side === "long";
-    if (ev.kind === "near") {
+    if (ev.kind === "near" || ev.kind === "close") {
+      const soon = ev.kind === "close";
+      const howFar = ev.dayPct
+        ? `${ev.distPct.toFixed(2)}% — это ${(ev.share * 100).toFixed(0)}% ` +
+          `дневного хода (${ev.dayPct.toFixed(1)}%)`
+        : `${ev.distPct.toFixed(2)}%`;
       await broadcast(
-        `🟡 <b>Цена подходит к зоне</b>\n` +
+        `${soon ? "🟠" : "🟡"} <b>${soon ? "Цена вплотную к зоне" : "Цена подходит к зоне"}</b>\n` +
         `${esc(z.symbol)} · ${long ? "лонг" : "шорт"} ` +
-        `${fmtPrice(z.lo)}–${fmtPrice(z.hi)}\n` +
-        `Сейчас ${fmtPrice(ev.price)} · до границы ${ev.distPct.toFixed(2)}%\n` +
+        `${fmtPrice(z.lo)}–${fmtPrice(z.hi)}${z.armed ? "" : " · <i>не принята</i>"}\n` +
+        `Сейчас ${fmtPrice(ev.price)} · до границы ${howFar}\n` +
         `<i>${esc(z.note ?? "")}</i>`);
       continue;
     }
@@ -408,6 +443,7 @@ const HELP = `<b>Что я умею</b>
 /tune ZECUSDT — заново подобрать параметры под монету
 /zones — зоны интереса, за которыми слежу
 /levels 2 — загрузить уровни из канала за 2 месяца
+/charts 3 — принести разборы с графиками за 3 дня
 /zone SOLUSDT long 81 82.1 — задать зону руками
 /del ZECUSDT — убрать из списка
 
@@ -677,6 +713,47 @@ async function onMessage(msg) {
       break;
     }
 
+    case "/charts": case "/графики": {
+      const days = Math.min(30, Math.max(1, Number(text.split(/\s+/)[1]) || 3));
+      const wait = await send(chatId, `🖼 Ищу разборы с графиками за ${days} дн…`);
+      try {
+        const list = await PZ.posts(Math.max(1, days / 30));
+        const since = Date.now() - days * 86_400_000;
+        const pics = PZ.charts(list).filter(x => (Date.parse(x.date) || 0) >= since);
+        if (!pics.length) {
+          const t = `За ${days} дн разборов с картинками не нашёл.`;
+          if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+          break;
+        }
+        if (wait) await editText(chatId, wait.message_id,
+          `🖼 <b>Разборов с графиками: ${pics.length}</b>\n` +
+          `<i>Под нужной картинкой ответь командой — например\n` +
+          `<code>/zone long 0.043 0.046</code>.\n` +
+          `Монету возьму из подписи, писать её не нужно.</i>`);
+
+        // Свежие сверху: старые разборы обычно уже отработаны.
+        for (const p of pics.slice(-20).reverse()) {
+          // Тикер в подписи нужен не для красоты: по нему «/zone long ...»
+          // ответом на картинку понимает, о какой монете речь.
+          const tag = p.tags[0] ? `#${p.tags[0]}` : "";
+          const more = p.photos.length > 1
+            ? `\nв посте ещё ${p.photos.length - 1} график(а) — по ссылке` : "";
+          const cap =
+            `${tag} · ${p.date?.slice(0, 10) ?? ""}\n` +
+            `${esc(p.head)}${more}\n${p.link}`;
+          await sendPhoto(chatId, p.photos[0], cap);
+        }
+        await send(chatId,
+          `Готово. Под нужным графиком ответь так:\n` +
+          `<code>/zone long 0.043 0.046</code>\n` +
+          `<i>Если в подписи нет тикера — укажи монету сам: ` +
+          `<code>/zone MINAUSDT long 0.043 0.046</code></i>`);
+      } catch (e) {
+        await send(chatId, `Не смог прочитать канал: ${esc(e.message)}`);
+      }
+      break;
+    }
+
     case "/levels": case "/уровни": {
       const mon = Math.min(6, Math.max(1, Number(text.split(/\s+/)[1]) || 2));
       const wait = await send(chatId, `📥 Читаю канал уровней за ${mon} мес…`);
@@ -804,12 +881,24 @@ async function onMessage(msg) {
     }
 
     case "/zone": case "/зона": {
-      const p = text.split(/\s+/).slice(1);
+      let p = text.split(/\s+/).slice(1);
       if (p[0] === "del" || p[0] === "удалить") {
         const ok = ZN.remove(Number(p[1]));
         await send(chatId, ok ? "🗑 Зона убрана." : "Такой зоны нет.");
         break;
       }
+
+      // Ответ на картинку разбора: монету берём из подписи, чтобы под
+      // графиком хватало «/zone long 0.043 0.046» — глядя на график,
+      // тикер набирать незачем, он и так в подписи.
+      let fromPic = null;
+      const rep = msg.reply_to_message;
+      if (rep && /^(long|лонг|buy|short|шорт|sell)$/i.test(p[0] ?? "")) {
+        const cap = rep.caption ?? rep.text ?? "";
+        const tag = /#([A-Z0-9]{2,12})\b/.exec(cap);
+        if (tag) { fromPic = tag[1]; p = [tag[1], ...p]; }
+      }
+
       const sym = WL.normalize(p[0]);
       const side = /^(long|лонг|buy)$/i.test(p[1] ?? "") ? "long"
                  : /^(short|шорт|sell)$/i.test(p[1] ?? "") ? "short" : null;
@@ -818,10 +907,16 @@ async function onMessage(msg) {
       if (!sym || !side || !isFinite(lo) || !isFinite(hi) || lo <= 0 || hi <= 0) {
         await send(chatId,
           "Так: <code>/zone SOLUSDT long 81 82.1</code>\n" +
+          "Ответом на картинку разбора можно короче: <code>/zone long 81 82.1</code>\n" +
           "или <code>/zone del 7</code> чтобы убрать.");
         break;
       }
-      const id = ZN.add({ symbol: sym, side, lo, hi, note: "задана вручную" });
+      if (!await pairExists(sym)) {
+        await send(chatId, `<b>${esc(sym)}</b> — такой пары на бирже нет.`);
+        break;
+      }
+      const id = ZN.add({ symbol: sym, side, lo, hi,
+                          note: fromPic ? "снята с графика канала" : "задана вручную" });
       logEvent({ kind: "note", symbol: sym, text: `зона задана вручную ${lo}–${hi}` });
       await send(chatId,
         `🎯 Зона добавлена: ${side === "long" ? "🟢 лонг" : "🔴 шорт"} ` +
@@ -1173,6 +1268,7 @@ async function main() {
     { command: "tune",   description: "заново подобрать параметры под монету" },
     { command: "zones",  description: "зоны интереса, за которыми слежу" },
     { command: "levels", description: "загрузить уровни из канала" },
+    { command: "charts", description: "разборы с графиками из канала" },
     { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },

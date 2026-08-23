@@ -40,8 +40,17 @@ function parsePage(html) {
     const id = Number(m[1]), block = m[2];
     const t = /datetime="([^"]+)"/.exec(block);
     const body = /class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(block);
-    if (!body) continue;
-    out.push({ id, date: t ? t[1] : null, text: unescape(body[1]) });
+
+    // Картинки поста: у веб-версии это фон блока с фотографией.
+    // Эмодзи-иконки лежат на telegram.org и сюда не попадают.
+    const photos = [...block.matchAll(/background-image:url\('(https:\/\/cdn[^']+)'\)/g)]
+      .map(x => x[1])
+      .filter(u => /\.(jpg|jpeg|png|webp)/i.test(u));
+
+    if (!body && !photos.length) continue;
+    out.push({ id, date: t ? t[1] : null,
+               text: body ? unescape(body[1]) : "",
+               photos: [...new Set(photos)] });
   }
   return out;
 }
@@ -109,6 +118,24 @@ export function levels(list) {
     }
   }
   return rows;
+}
+
+/**
+ * Посты с картинками — те самые разборы, где уровни нарисованы,
+ * а не написаны. Текстом их не взять, поэтому бот просто приносит
+ * картинку в чат, а уровень с неё снимает человек.
+ */
+export function charts(list) {
+  const out = [];
+  for (const p of list) {
+    if (!p.photos?.length) continue;
+    const tags = [...new Set([...p.text.matchAll(/#([A-Z0-9]{2,12})\b/g)].map(x => x[1]))];
+    // Первая строка поста — обычно заголовок разбора.
+    const head = p.text.split("\n").find(x => x.trim().length > 3)?.trim() ?? "";
+    out.push({ postId: p.id, date: p.date, tags, head: head.slice(0, 120),
+               photos: p.photos, link: `https://t.me/${CH}/${p.id}` });
+  }
+  return out;
 }
 
 log("разбор канала уровней подключён");

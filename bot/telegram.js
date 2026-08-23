@@ -56,6 +56,22 @@ export async function sendLong(chatId, text, keyboard = null) {
   return last;
 }
 
+/**
+ * Картинка по ссылке: Telegram скачивает её сам, нам качать не нужно.
+ * Если ссылка почему-то не берётся, отправляем подпись текстом —
+ * потерять разбор хуже, чем показать его без картинки.
+ */
+export async function sendPhoto(chatId, url, caption = "") {
+  try {
+    return await api("sendPhoto", {
+      chat_id: chatId, photo: url, caption, parse_mode: "HTML",
+    });
+  } catch (e) {
+    log("картинка не отправилась:", e.message);
+    return send(chatId, caption + `\n<i>(картинка не загрузилась)</i>`);
+  }
+}
+
 /** Отправка файла — месячные выгрузки. */
 export async function sendDoc(chatId, path, caption = "") {
   const { readFile } = await import("node:fs/promises");

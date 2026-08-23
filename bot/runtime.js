@@ -40,6 +40,13 @@ export const PARAMS = {
                  title: "Источник пар",         unit: "" },
   tz:          { g: "отчёты", def: () => 3,                  opts: [0, 1, 2, 3, 5, 7],
                  title: "Твой часовой пояс",    unit: "UTC+" },
+  // Подход к зоне меряем не процентами цены, а долей среднедневного
+  // размаха самой монеты: один процент для спокойной монеты — целый
+  // день хода, а для резвой — четверть часа.
+  zone_far_share:  { g: "сделки", def: () => 29, opts: [50, 40, 29, 20, 15],
+                     title: "Предупредить за",  unit: "% дневного хода" },
+  zone_near_share: { g: "сделки", def: () => 10, opts: [20, 15, 10, 7, 5],
+                     title: "Вплотную при",     unit: "% дневного хода" },
 };
 
 export function num(key) {
@@ -67,6 +74,8 @@ export const fmtVal = (key) => {
   if (key === "top_pairs") return `до ${v} пар`;
   if (key === "min_turn_k") return v >= 1000 ? `от ${v / 1000} млн $` : `от ${v} тыс $`;
   if (key === "report_hour") return `${String(v).padStart(2, "0")}:00 по-твоему`;
+  if (key === "zone_far_share" || key === "zone_near_share")
+    return `${v}% дневного хода`;
   if (v === 0) return "выключен";
   return `каждые ${v} ${p.unit}`;
 };
