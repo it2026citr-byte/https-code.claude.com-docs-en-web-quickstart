@@ -7,7 +7,7 @@ import {
 import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
          answerCallback, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
-import { prices, lastPrice } from "./data/mexc.js";
+import { prices, lastPrice, deepHistory } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt } from "./monitor.js";
 import { candles } from "./candles.js";
 import { atr } from "./indicators.js";
@@ -260,6 +260,37 @@ function tuneText(rows) {
     "<i>Параметры подбирались на первых 70% истории, а сравнивались",
     "на последних 30%, которых подбор не видел. Принято только то,",
     "что выиграло на этой невидимой части — иначе это подгонка под шум.</i>",
+  ].join("\n");
+}
+
+/**
+ * Построить зоны по монете и записать их.
+ *
+ * Строим на часовых свечах: на них видны и боковики, и объёмные узлы,
+ * а дневных для молодой монеты просто не наберётся. Старые
+ * автоматические зоны по монете убираем — уровни устаревают.
+ */
+async function buildZones(symbol) {
+  const c = await deepHistory(symbol, "1h", 1400).catch(() => []);
+  if (c.length < 400) return { zones: [], short: true };
+  const found = ZN.propose(c);
+  for (const z of ZN.forSymbol(symbol)) if (z.source === "auto") ZN.remove(z.id);
+  const zones = found.map(z => ({
+    ...z,
+    id: ZN.add({ symbol, side: z.side, lo: z.lo, hi: z.hi, note: z.note, source: "auto" }),
+  }));
+  return { zones, short: false };
+}
+
+function zonesText(symbol, zones) {
+  if (!zones.length)
+    return `\n\n🎯 <b>Зон нет</b> — подходящих уровней в разумной близости не нашлось.`;
+  const lines = zones.map(z =>
+    `${z.side === "long" ? "🟢" : "🔴"} <b>${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}</b> ` +
+    `· ${z.away}% от цены\n   <i>${esc(z.note)}</i>`);
+  return ["", "", `🎯 <b>Зоны — ${zones.length}</b>`, ...lines, "",
+    "<i>Сигнал будет, только когда цена подойдёт к зоне.",
+    `Поправить: <code>/zone ${symbol} long ЦЕНА ЦЕНА</code>, убрать: <code>/zone del НОМЕР</code></i>`,
   ].join("\n");
 }
 
@@ -528,7 +559,13 @@ async function onMessage(msg) {
 
         WL.add(sym, res, Object.keys(tuned).length ? tuned : null);
         logEvent({ kind: "note", symbol: sym, text: "монета добавлена в список" });
+
+        if (wait) await editText(chatId, wait.message_id,
+          `🎯 <b>${esc(sym)}</b> · строю зоны по истории…`);
+        const zn = await buildZones(sym).catch(() => ({ zones: [], short: true }));
+
         const txt = analysisText(sym, res) + tuneText(tuneRows) +
+          (zn.short ? "" : zonesText(sym, zn.zones)) +
           `\n\n✅ <b>Добавлена в список</b> — теперь сканируется всегда.`;
         if (wait) await editText(chatId, wait.message_id, txt);
         else await sendLong(chatId, txt);
@@ -539,7 +576,18 @@ async function onMessage(msg) {
     }
 
     case "/zones": case "/зоны": {
-      const arg = WL.normalize(text.split(/\s+/)[1]);
+      const parts = text.split(/\s+/);
+      const arg = WL.normalize(parts[1]);
+      // «/zones SOLUSDT новые» — перестроить уровни по свежей истории.
+      if (arg && /^(новые|new|rebuild|заново)$/i.test(parts[2] ?? "")) {
+        const wait = await send(chatId, `🎯 Строю зоны по <b>${esc(arg)}</b>…`);
+        const zn = await buildZones(arg).catch(() => ({ zones: [], short: true }));
+        const t = zn.short
+          ? `<b>${esc(arg)}</b> — истории мало, зоны не строю.`
+          : `🎯 <b>${esc(arg)}</b>` + zonesText(arg, zn.zones);
+        if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+        break;
+      }
       const list = arg ? ZN.forSymbol(arg) : ZN.all();
       if (!list.length) {
         await send(chatId, arg

@@ -146,16 +146,35 @@ function roundLevels(px) {
  * Ни один признак сам по себе не воспроизводит его выбор, поэтому
  * берём совпадение нескольких: уровень, за который голосуют три-четыре
  * признака, встречается у него заметно чаще случайного.
+ *
+ * Дальше настройки подобраны не по сходству с его зонами, а по деньгам:
+ * 56 монет MEXC, семь месяцев часовых свечей, каждая зона доиграна до
+ * стопа или целей. Мерилом взято превосходство над случайными уровнями
+ * той же геометрии — сама лесенка с безубытком на этом отрезке рынка
+ * в плюсе на любых уровнях, и без контроля это выглядело бы победой.
+ *
+ *   как было (балл 2, отступ 0.5)   +0.095R   превосходство +0.030R
+ *   балл 3, отступ 0.2, по тренду   +0.128R   превосходство +0.036R
+ *
+ * Проверено на двух непересекающихся половинах монет: +0.044 и +0.027.
+ * Веса признаков перебирались отдельно и на итог не влияют — решает
+ * не вес, а сам набор кандидатов.
  */
 export const WEIGHTS = { box: 2, swing: 1, vol: 1, round: 1, touch: 0 };
 
 export function propose(c, opts = {}) {
-  const { maxZones = 6, minScore = 2, nearPct = 0.5 } = opts;
+  const { maxZones = 6, minScore = 3, nearPct = 0.5, trend = true } = opts;
   const W = { ...WEIGHTS, ...(opts.weights || {}) };
   const A = atr(c, 14);
   const i = c.length - 2;
   const px = c[i].c, a = A[i];
   if (!px || !a) return [];
+
+  // Против структуры от уровня не входим: проверка на истории MEXC
+  // показала, что именно встречные входы съедают всё преимущество.
+  // Когда структура не определилась, берём обе стороны.
+  let bias = 0;
+  if (trend) { try { bias = structureBias(c, 50).bias[i] ?? 0; } catch { bias = 0; } }
 
   const bx = boxes(c);
   const sw = swings(c);
@@ -195,6 +214,7 @@ export function propose(c, opts = {}) {
   for (const z of merged) {
     if (z.score < minScore) continue;
     const side = z.lvl < px ? "long" : "short";
+    if (bias !== 0 && (side === "long" ? bias !== BULL : bias !== BEAR)) continue;
     const away = Math.abs(z.lvl - px) / px * 100;
     // Дальше пятнадцати процентов зона бесполезна: цена дойдёт нескоро,
     // а к тому времени структура успеет перестроиться.
@@ -218,12 +238,18 @@ export function propose(c, opts = {}) {
 
   // Одинаковые и вложенные зоны схлопываем: несколько окон боковика
   // дают один и тот же диапазон.
+  // Соседние окна боковика дают почти один и тот же диапазон. Если зоны
+  // перекрываются больше чем наполовину — это один уровень, и второй раз
+  // о нём сигналить незачем. Оставляем ту, у которой балл выше.
   const uniq = [];
-  for (const z of out.sort((x, y) => y.score - x.score)) {
-    const dup = uniq.find(u => u.side === z.side &&
-      Math.abs(u.lo - z.lo) / px * 100 < 0.5 && Math.abs(u.hi - z.hi) / px * 100 < 0.5);
-    const inside = uniq.find(u => u.side === z.side && z.lo >= u.lo && z.hi <= u.hi);
-    if (!dup && !inside) uniq.push(z);
+  for (const z of out.sort((x, y) => (y.score - x.score) || (Number(x.away) - Number(y.away)))) {
+    const same = uniq.find(u => {
+      if (u.side !== z.side) return false;
+      const lo = Math.max(u.lo, z.lo), hi = Math.min(u.hi, z.hi);
+      if (hi <= lo) return false;
+      return (hi - lo) / Math.min(u.hi - u.lo, z.hi - z.lo) > 0.5;
+    });
+    if (!same) uniq.push(z);
   }
 
   // Сильные зоны важнее близких, но при равном балле берём ближнюю.
@@ -271,16 +297,19 @@ export function check(prices, { nearPct = 1.5, cooldownH = 12 } = {}) {
  * В этом весь смысл входа от уровня — стоп рядом, значит то же движение
  * стоит больше R.
  */
-export function tradeFrom(zone, price, atrVal) {
+export const TRADE = { pad: 0.2, minMult: 0.8, maxMult: 2.5, step: 0.5 };
+
+export function tradeFrom(zone, price, atrVal, opts = {}) {
+  const T = { ...TRADE, ...opts };
   const long = zone.side === "long";
   const edge = long ? zone.lo : zone.hi;
-  const pad = 0.5 * (atrVal || Math.abs(zone.hi - zone.lo));
+  const pad = T.pad * (atrVal || Math.abs(zone.hi - zone.lo));
   let dist = Math.abs(price - edge) + pad;
-  const minD = 0.8 * (atrVal || dist), maxD = 2.5 * (atrVal || dist);
+  const minD = T.minMult * (atrVal || dist), maxD = T.maxMult * (atrVal || dist);
   dist = Math.min(Math.max(dist, minD), maxD);
   const sl = long ? price - dist : price + dist;
   const targets = [1, 2, 3, 4, 5].map(n =>
-    long ? price + 0.5 * n * dist : price - 0.5 * n * dist);
+    long ? price + T.step * n * dist : price - T.step * n * dist);
   return { side: zone.side, entry: price, sl, targets, dist };
 }
 
