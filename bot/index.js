@@ -274,17 +274,26 @@ async function buildZones(symbol) {
   const c = await deepHistory(symbol, "1h", 1400).catch(() => []);
   if (c.length < 400) return { zones: [], short: true };
   const found = ZN.propose(c);
+  // Если ничего не прошло — посмотрим, что именно отсеялось. «Зон нет»
+  // без причины неотличимо от поломки.
+  const weak = found.length ? [] : ZN.propose(c, { minScore: 1, trend: false, maxZones: 20 });
   for (const z of ZN.forSymbol(symbol)) if (z.source === "auto") ZN.remove(z.id);
   const zones = found.map(z => ({
     ...z,
     id: ZN.add({ symbol, side: z.side, lo: z.lo, hi: z.hi, note: z.note, source: "auto" }),
   }));
-  return { zones, short: false };
+  return { zones, weak, short: false };
 }
 
-function zonesText(symbol, zones) {
-  if (!zones.length)
-    return `\n\n🎯 <b>Зон нет</b> — подходящих уровней в разумной близости не нашлось.`;
+function zonesText(symbol, zones, weak = []) {
+  if (!zones.length) {
+    const why = weak.length
+      ? `рядом есть уровни, но ни один не подпёрт боковиком — ` +
+        `только ${esc(weak[0].note)}. Такие на проверке не держали цену.`
+      : `монета идёт без остановок, зацепиться не за что.`;
+    return `\n\n🎯 <b>Зон нет</b> — ${why}\n` +
+      `<i>Если видишь уровень сам: <code>/zone ${symbol} long ЦЕНА ЦЕНА</code></i>`;
+  }
   const lines = zones.map(z =>
     `${z.side === "long" ? "🟢" : "🔴"} <b>${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}</b> ` +
     `· ${z.away}% от цены\n   <i>${esc(z.note)}</i>`);
@@ -565,7 +574,7 @@ async function onMessage(msg) {
         const zn = await buildZones(sym).catch(() => ({ zones: [], short: true }));
 
         const txt = analysisText(sym, res) + tuneText(tuneRows) +
-          (zn.short ? "" : zonesText(sym, zn.zones)) +
+          (zn.short ? "" : zonesText(sym, zn.zones, zn.weak)) +
           `\n\n✅ <b>Добавлена в список</b> — теперь сканируется всегда.`;
         if (wait) await editText(chatId, wait.message_id, txt);
         else await sendLong(chatId, txt);
@@ -584,7 +593,7 @@ async function onMessage(msg) {
         const zn = await buildZones(arg).catch(() => ({ zones: [], short: true }));
         const t = zn.short
           ? `<b>${esc(arg)}</b> — истории мало, зоны не строю.`
-          : `🎯 <b>${esc(arg)}</b>` + zonesText(arg, zn.zones);
+          : `🎯 <b>${esc(arg)}</b>` + zonesText(arg, zn.zones, zn.weak);
         if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
         break;
       }
