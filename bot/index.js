@@ -1,4 +1,5 @@
 import { cfg, log, codeVersion } from "./config.js";
+import { acquireLock } from "./lock.js";
 import {
   db, now, getSetting, setSetting, upsertUser, openPositions,
   getUser, setRole, listUsers, getMode, setMode, MODE_SCAN, MODE_FOCUS,
@@ -657,6 +658,9 @@ async function onCallback(q) {
 async function main() {
   // Версию печатаем до всякой сети: если связи нет, знать её важнее всего.
   log(`версия кода ${VER.hash} от ${VER.date}`);
+
+  // Вторая копия не должна дожить до отправки сообщений.
+  if (!acquireLock()) process.exit(0);
   const me = await api("getMe");
   const o = ownerId();
   log(`бот @${me.username} на связи · админ: ${o ?? "будет закреплён первым /start"}`);

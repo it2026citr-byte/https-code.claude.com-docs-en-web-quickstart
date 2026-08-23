@@ -15,6 +15,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 STORAGE="$DIR/storage"
 PIDFILE="$STORAGE/supervisor.pid"
 NODEPID="$STORAGE/node.pid"
+LOCKDIR="$STORAGE/supervisor.lock"
+BOTLOCK="$STORAGE/bot.lock"
 LOG="$STORAGE/bot.log"
 MAXLOG=2000000          # 2 МБ, дальше обрезаем
 
@@ -74,6 +76,8 @@ if [ "$1" = "stop" ]; then
     kill "$(cat "$NODEPID")" 2>/dev/null && STOPPED=1
     rm -f "$NODEPID"
   fi
+  rmdir "$LOCKDIR" 2>/dev/null
+  rm -f "$BOTLOCK"
   [ "$STOPPED" = 1 ] && echo "остановлен" || echo "не был запущен"
   exit 0
 fi
@@ -112,7 +116,8 @@ if [ "$1" = "restart" ]; then
   [ "$FOUND" -gt 0 ] && echo "    убрано копий: $FOUND" || echo "    забытых копий не было"
 
   echo "3/4 запускаю заново…"
-  rm -f "$PIDFILE" "$NODEPID"
+  rm -f "$PIDFILE" "$NODEPID" "$BOTLOCK"
+  rmdir "$LOCKDIR" 2>/dev/null
   (nohup sh "$0" >/dev/null 2>&1 &)
   sleep 6
 
@@ -145,8 +150,20 @@ if alive; then
   exit 0
 fi
 
+# Атомарная защёлка. mkdir либо создаёт каталог, либо падает — третьего
+# не дано, поэтому два одновременных запуска не проскочат оба, как это
+# бывает с проверкой «файл существует» и последующей записью.
+if ! mkdir "$LOCKDIR" 2>/dev/null; then
+  if alive; then
+    echo "уже работает, PID $(cat "$PIDFILE") — вторая копия не нужна"
+    exit 0
+  fi
+  rmdir "$LOCKDIR" 2>/dev/null
+  mkdir "$LOCKDIR" 2>/dev/null || { echo "не удалось занять защёлку, выхожу"; exit 0; }
+fi
+
 echo $$ > "$PIDFILE"
-trap 'rm -f "$PIDFILE" "$NODEPID"' EXIT INT TERM
+trap 'rm -f "$PIDFILE" "$NODEPID"; rmdir "$LOCKDIR" 2>/dev/null' EXIT INT TERM
 
 termux-wake-lock 2>/dev/null
 
