@@ -25,14 +25,22 @@ import { structureBias, zonePos, BULL, BEAR } from "../smc.js";
  *   касание ордер-блока   — всего 4 сделки за 125 дней, ловить нечего.
  */
 
-const P = {
+const DEFAULTS = {
   atrLen: 14, utKey: 1, utAtr: 10, trendLen: 200,
   cciMin: 100, sqzWindow: 6,
   legsInternal: 5, legsSwing: 50,
   minStopAtr: 1.0, maxStopAtr: 2.5, swingPad: 0.25, minStopPct: 0.15,
 };
 
-export default {
+export const TUNABLE = {
+  cciMin:       [60, 100, 140],
+  legsSwing:    [30, 50, 80],
+  sqzWindow:    [3, 6, 12],
+};
+
+export function make(over = {}) {
+  const P = { ...DEFAULTS, ...over };
+  return {
   id: "SMC-Confluence",
   title: "UT Bot + Squeeze + структура SMC",
   timeframe: "1h",
@@ -137,3 +145,6 @@ export default {
     return null;
   },
 };
+}
+
+export default make();

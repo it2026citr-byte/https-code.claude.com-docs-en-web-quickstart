@@ -14,7 +14,7 @@ import { atr, cci, squeeze, utBot, structure, ema } from "../indicators.js";
 
 // Пороги подобраны прогоном по истории: 60 пар, ~500 часов, удержание 96 ч.
 // Смягчение любого из них роняет матожидание вдвое и больше — проверено.
-const P = {
+const DEFAULTS = {
   atrLen: 14,
   swingLen: 10,
   swingPad: 0.25,      // отступ за экстремум, в ATR
@@ -29,7 +29,16 @@ const P = {
   minStopPct: 0.15,    // уже — шум, комиссия съест
 };
 
-export default {
+/** Что можно подгонять под конкретную монету и какие значения перебирать. */
+export const TUNABLE = {
+  cciMin:    [60, 100, 140],
+  utKey:     [0.7, 1, 1.5],
+  sqzWindow: [3, 6, 12],
+};
+
+export function make(over = {}) {
+  const P = { ...DEFAULTS, ...over };
+  return {
   id: "Golden-Reverse",
   title: "Golden-Reverse",
   timeframe: "1h",
@@ -142,3 +151,6 @@ export default {
     return null;
   },
 };
+}
+
+export default make();

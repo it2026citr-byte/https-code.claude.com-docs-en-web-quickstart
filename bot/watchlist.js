@@ -7,9 +7,15 @@ db.exec(`
 CREATE TABLE IF NOT EXISTS watchlist (
   symbol    TEXT PRIMARY KEY,
   added_at  INTEGER NOT NULL,
-  stats     TEXT
+  stats     TEXT,
+  params    TEXT
 );
 `);
+
+{
+  const cols = db.prepare("PRAGMA table_info(watchlist)").all().map(r => r.name);
+  if (!cols.includes("params")) db.exec("ALTER TABLE watchlist ADD COLUMN params TEXT");
+}
 
 export const list = () =>
   db.prepare("SELECT * FROM watchlist ORDER BY symbol").all();
@@ -17,9 +23,17 @@ export const has = (s) =>
   Boolean(db.prepare("SELECT 1 FROM watchlist WHERE symbol=?").get(s));
 export const remove = (s) =>
   db.prepare("DELETE FROM watchlist WHERE symbol=?").run(s).changes > 0;
-export const add = (s, stats) =>
-  db.prepare("INSERT OR REPLACE INTO watchlist(symbol,added_at,stats) VALUES(?,?,?)")
-    .run(s, now(), stats ? JSON.stringify(stats) : null);
+export const add = (s, stats, params) =>
+  db.prepare("INSERT OR REPLACE INTO watchlist(symbol,added_at,stats,params) VALUES(?,?,?,?)")
+    .run(s, now(), stats ? JSON.stringify(stats) : null,
+         params ? JSON.stringify(params) : null);
+
+/** Подобранные под монету параметры: { "Golden-Reverse": {...}, ... } */
+export function paramsFor(symbol) {
+  const r = db.prepare("SELECT params FROM watchlist WHERE symbol=?").get(symbol);
+  if (!r?.params) return null;
+  try { return JSON.parse(r.params); } catch { return null; }
+}
 export const symbols = () => list().map(r => r.symbol);
 
 /** ZEC · zec/usdt · ZECUSDT — всё приводим к одному виду. */
@@ -135,6 +149,15 @@ export async function analyze(symbol, strategies, months = 6) {
                avgR: n ? sumR / n : 0, perWeek: n ? n / days * 7 : 0 });
   }
   return out;
+}
+
+/** Свечи под конкретную стратегию, с учётом возраста монеты. */
+export async function candlesFor(symbol, strategy, months = 6) {
+  const age = await ageDays(symbol);
+  const tf = age >= 90 ? strategy.timeframe : pickTf(strategy.timeframe, age);
+  const want = Math.min(9000, Math.round(months * 30 * BARS_PER_DAY[tf]) + 300);
+  const c = await deepHistory(symbol, tf, want);
+  return c.length >= strategy.warmup + 400 ? c : null;
 }
 
 export async function check(symbol) {

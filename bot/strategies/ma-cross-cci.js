@@ -24,7 +24,7 @@ import { sma, cci, atr, structure } from "../indicators.js";
  * от простого схождения линий.
  */
 
-const P = {
+const DEFAULTS = {
   fast: 30,
   slow: 60,
   cciLen: 14,
@@ -49,7 +49,7 @@ const P = {
  * креста, если до него не больше leadBars. Скорость берётся за три бара,
  * чтобы не ловить дрожь одного.
  */
-function crossAhead(fast, slow, i) {
+function crossAhead(fast, slow, i, P) {
   if (fast[i] == null || slow[i] == null || fast[i - P.slopeBars] == null) return 0;
   const gapNow = fast[i] - slow[i];
   const gapWas = fast[i - P.slopeBars] - slow[i - P.slopeBars];
@@ -61,7 +61,14 @@ function crossAhead(fast, slow, i) {
   return gapNow < 0 ? 1 : -1;                   // снизу вверх / сверху вниз
 }
 
-export default {
+export const TUNABLE = {
+  leadBars: [1.5, 2, 3, 4],
+  cciEdge:  [0, 20, 40],
+};
+
+export function make(over = {}) {
+  const P = { ...DEFAULTS, ...over };
+  return {
   id: "MA-Cross-CCI",
   title: "MA30/MA60 + CCI, вход до креста",
   timeframe: "1h",
@@ -82,7 +89,7 @@ export default {
   conditions(c, x, i) {
     const a = x.atr[i];
     if (a == null || x.cci[i] == null || x.cci[i - 1] == null) return null;
-    const dir = crossAhead(x.fast, x.slow, i);
+    const dir = crossAhead(x.fast, x.slow, i, P);
     const px = c[i].c;
     const cciUp = x.cci[i] > x.cci[i - 1];
     return {
@@ -163,3 +170,6 @@ export default {
     return null;
   },
 };
+}
+
+export default make();

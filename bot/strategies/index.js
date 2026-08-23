@@ -17,6 +17,9 @@ export async function loadStrategies() {
       const m = await import(join(HERE, f));
       const s = m.default;
       if (!s?.id || !s.evaluate) { log(`пропущен ${f}: нет id или evaluate`); continue; }
+      // Фабрика и сетка перебора нужны подборщику параметров под монету.
+      s.make = m.make ?? null;
+      s.tunable = m.TUNABLE ?? null;
       out.push(s);
     } catch (e) {
       log(`стратегия ${f} не загрузилась:`, e.message);

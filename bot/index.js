@@ -11,6 +11,7 @@ import { prices, lastPrice } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt } from "./monitor.js";
 import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
 import * as WL from "./watchlist.js";
+import { tuneStrategy } from "./tune.js";
 import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
@@ -193,6 +194,24 @@ function analysisText(symbol, res) {
   ].join("\n");
 }
 
+function tuneText(rows) {
+  if (!rows.length) return "";
+  const lines = rows.map(r => {
+    if (!r.chosen)
+      return `▫️ <b>${r.id}</b> — умолчания\n   <i>${r.why ?? "подбор не дал выигрыша"}</i>`;
+    const p = Object.entries(r.params).map(([k, v]) => `${k}=${v}`).join(" · ");
+    return `🔧 <b>${r.id}</b>\n   <code>${p}</code>\n` +
+      `   <i>на проверочной части: ${r.test.n} сигн, ${(r.test.rate*100).toFixed(0)}%, ` +
+      `${r.test.sumR > 0 ? "+" : ""}${r.test.sumR.toFixed(1)}R ` +
+      `против ${r.baseTest.sumR > 0 ? "+" : ""}${r.baseTest.sumR.toFixed(1)}R у умолчаний</i>`;
+  });
+  return ["", "", "<b>Подгонка под монету</b>", ...lines, "",
+    "<i>Параметры подбирались на первых 70% истории, а сравнивались",
+    "на последних 30%, которых подбор не видел. Принято только то,",
+    "что выиграло на этой невидимой части — иначе это подгонка под шум.</i>",
+  ].join("\n");
+}
+
 // --- команды ----------------------------------------------------------------
 const HELP = `<b>Что я умею</b>
 
@@ -203,6 +222,7 @@ const HELP = `<b>Что я умею</b>
 /settings — интервалы, монеты, риск, отчёты (четыре раздела)
 /coins — мой список монет
 /add ZECUSDT — разобрать историю за полгода и добавить
+/tune ZECUSDT — заново подобрать параметры под монету
 /del ZECUSDT — убрать из списка
 
 /positions — открытые сделки, текущий результат, закрыть вручную
@@ -407,7 +427,15 @@ async function onMessage(msg) {
           const w = a.reduce((s, z) => s + z.win, 0);
           if (n) st = `\n<i>по истории: ${sig(n)}, ${prof(w)} (${Math.round(w/n*100)}%)</i>`;
         } catch { /* без статистики тоже сойдёт */ }
-        await send(chatId, `<b>${esc(r.symbol)}</b>${st}`,
+        let tn = "";
+        try {
+          const pr = JSON.parse(r.params || "null");
+          if (pr && Object.keys(pr).length)
+            tn = "\n<i>подогнано: " + Object.entries(pr)
+              .map(([id, v]) => `${id} (${Object.entries(v).map(([k, x]) => k + "=" + x).join(", ")})`)
+              .join("; ") + "</i>";
+        } catch { /* без подгонки тоже сойдёт */ }
+        await send(chatId, `<b>${esc(r.symbol)}</b>${st}${tn}`,
           [[{ text: "🗑 Убрать", callback_data: `wldel:${r.symbol}` }]]);
       }
       break;
@@ -429,15 +457,51 @@ async function onMessage(msg) {
           if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
           break;
         }
-        WL.add(sym, res);
+        // Подгонка параметров под монету — на первых 70% истории,
+        // проверка на последних 30%, которых подбор не видел.
+        if (wait) await editText(chatId, wait.message_id,
+          `🔧 <b>${esc(sym)}</b> · подбираю параметры под монету…`);
+        const tuned = {}, tuneRows = [];
+        for (const st of STRATEGIES) {
+          const c = await WL.candlesFor(sym, st).catch(() => null);
+          if (!c) continue;
+          const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48).catch(() => null);
+          if (!t) continue;
+          if (t.chosen) tuned[st.id] = t.params;
+          tuneRows.push({ id: st.id, ...t });
+        }
+
+        WL.add(sym, res, Object.keys(tuned).length ? tuned : null);
         logEvent({ kind: "note", symbol: sym, text: "монета добавлена в список" });
-        const txt = analysisText(sym, res) +
+        const txt = analysisText(sym, res) + tuneText(tuneRows) +
           `\n\n✅ <b>Добавлена в список</b> — теперь сканируется всегда.`;
         if (wait) await editText(chatId, wait.message_id, txt);
         else await sendLong(chatId, txt);
       } catch (e) {
         await send(chatId, `Не смог разобрать <b>${esc(sym)}</b>: ${esc(e.message)}`);
       }
+      break;
+    }
+
+    case "/tune": case "/подбор": {
+      const sym = WL.normalize(text.split(/\s+/)[1]);
+      if (!sym) { await send(chatId, "Так: <code>/tune ZECUSDT</code>"); break; }
+      if (!WL.has(sym)) { await send(chatId, `<b>${esc(sym)}</b> не в списке. Сначала <code>/add ${esc(sym)}</code>`); break; }
+      const wait = await send(chatId, `🔧 Подбираю параметры под <b>${esc(sym)}</b>…`);
+      const tuned = {}, rows = [];
+      for (const st of STRATEGIES) {
+        const c = await WL.candlesFor(sym, st).catch(() => null);
+        if (!c) continue;
+        const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48).catch(() => null);
+        if (!t) continue;
+        if (t.chosen) tuned[st.id] = t.params;
+        rows.push({ id: st.id, ...t });
+      }
+      const old = WL.list().find(r => r.symbol === sym);
+      WL.add(sym, old?.stats ? JSON.parse(old.stats) : null,
+             Object.keys(tuned).length ? tuned : null);
+      const txt = `🔧 <b>${esc(sym)}</b>` + tuneText(rows);
+      if (wait) await editText(chatId, wait.message_id, txt); else await sendLong(chatId, txt);
       break;
     }
 
@@ -686,6 +750,7 @@ async function main() {
     { command: "settings", description: "интервалы, монеты, риск, отчёты" },
     { command: "coins",  description: "мой список монет" },
     { command: "add",    description: "добавить монету с разбором истории" },
+    { command: "tune",   description: "заново подобрать параметры под монету" },
     { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },

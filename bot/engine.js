@@ -6,7 +6,7 @@ import { candles } from "./candles.js";
 import { dailyVolatility } from "./indicators.js";
 import { logEvent } from "./journal.js";
 import { num } from "./runtime.js";
-import { symbols as watchSymbols } from "./watchlist.js";
+import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 async function mapLimit(items, n, fn) {
@@ -74,18 +74,23 @@ export async function scanMarket(strategies, onSignal) {
     const fired = [];       // сработавшие стратегии по этой паре
     const cond = [];        // условия всех стратегий, для показа близости
 
+    // Если под монету подобраны свои параметры — работаем ими.
+    const tuned = paramsFor(p.symbol);
+
     for (const tf of tfs) {
       // Через кеш: первый обход тянет по 300 свечей, дальше только хвост.
       const c = await candles(p.symbol, tf, 300);
       if (c.length < 160) return;
       const i = c.length - 2;                       // последний закрытый бар
-      for (const s of strategies) {
-        if (s.timeframe !== tf) continue;
+      for (const base of strategies) {
+        if (base.timeframe !== tf) continue;
+        const own = tuned?.[base.id];
+        const s = own && base.make ? base.make(own) : base;
         const x = s.prepare(c);
         const cc = s.conditions ? s.conditions(c, x, i) : null;
         if (cc) cond.push({ id: s.id, cc });
         const sig = s.evaluate(c, x, i);
-        if (sig) fired.push({ ...sig, strategy: s.id, tf, barTime: c[i].t });
+        if (sig) fired.push({ ...sig, strategy: s.id, tf, barTime: c[i].t, tuned: Boolean(own) });
       }
     }
     if (!fired.length) return;

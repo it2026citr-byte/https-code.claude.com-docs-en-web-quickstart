@@ -4,6 +4,7 @@ import { prices, TF_SEC } from "./data/mexc.js";
 import { candles } from "./candles.js";
 import { logEvent, goldenTime } from "./journal.js";
 import { num } from "./runtime.js";
+import { paramsFor } from "./watchlist.js";
 import { fmtPrice, fmtAgo } from "./format.js";
 
 /** Тревога не повторяется: уникальный ключ (позиция, уровень, причина). */
@@ -149,8 +150,13 @@ export async function monitorTick({ strategies, notify, focus }) {
     }
 
     // --- слом стратегии ---------------------------------------------------
-    const st = strategies.find(s => s.id === p.strategy);
-    if (!st?.invalidated) continue;
+    // У слитого сигнала имя составное: «A + B». Берём первую из тех,
+    // что действительно есть в реестре, — иначе проверки слома молчали бы.
+    const names = String(p.strategy).split(" + ");
+    const base = strategies.find(s => names.includes(s.id));
+    if (!base?.invalidated) continue;
+    const own = paramsFor(p.symbol)?.[base.id];
+    const st = own && base.make ? base.make(own) : base;
     const step = TF_SEC[st.timeframe] ?? 3600;
     const closedBar = Math.floor(now() / step) * step - step;
     const barIsNew = (p.last_bar ?? 0) < closedBar;
