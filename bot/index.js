@@ -8,7 +8,8 @@ import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
 import { topPairs } from "./data/tradingview.js";
 import { prices, lastPrice } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt } from "./monitor.js";
-import { PARAMS, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
+import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
+import * as WL from "./watchlist.js";
 import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
@@ -16,7 +17,7 @@ import { scanMarket } from "./engine.js";
 import { startLoops, startReports } from "./scheduler.js";
 import { fmtPrice, fmtPct, fmtUsd, fmtAgo, fmtTime } from "./format.js";
 import {
-  logEvent, monthKey, closedBetween, closedInMonth, digest, stats, signalCard,
+  logEvent, monthKey, closedBetween, closedInMonth, digest, stats, signalCard, plural,
   goldenTime,
   summaryLine, monthReport, exportMonthCsv, exportMonthLog, availableMonths,
 } from "./journal.js";
@@ -80,34 +81,47 @@ export async function postUpdate(positionId, text, keyboard = null) {
 }
 
 // --- настройки ------------------------------------------------------------
-function settingsView() {
-  const rows = Object.keys(PARAMS)
-    .map(k => `<b>${PARAMS[k].title}:</b> ${fmtVal(k)}`);
-  const utc = String(reportHourUtc()).padStart(2, "0");
-  return [
-    "⚙️ <b>Настройки</b>", "",
-    ...rows, "",
-    `<i>Дневной отчёт уходит в ${utc}:00 UTC. Правка применяется`,
-    `со следующего такта — перезапускать бота не нужно.`,
-    ``,
-    `Чем ниже порог оборота, тем больше пар и тем хуже исполнение:`,
-    `на неликвиде проскальзывание съедает выигрыш стратегии.</i>`,
-  ].join("\n");
+const HINT = {
+  рынок: "Чем ниже порог оборота, тем больше пар и тем хуже исполнение: " +
+         "на неликвиде проскальзывание съедает выигрыш. Монеты из /coins " +
+         "сканируются всегда, независимо от оборота.",
+  сделки: "Чем раньше стоп уходит в безубыток, тем меньше убыточных сделок " +
+          "и тем меньше прибыль. Каждые пять процентов убыточных стоят " +
+          "примерно пятую часть дохода.",
+  ритм: "Правка применяется со следующего такта, перезапускать не нужно.",
+};
+
+function settingsView(g) {
+  const rows = paramsOf(g).map(k => `<b>${PARAMS[k].title}:</b> ${fmtVal(k)}`);
+  const extra = g === "отчёты"
+    ? `Дневной отчёт уходит в ${String(reportHourUtc()).padStart(2, "0")}:00 UTC.`
+    : "";
+  return [`⚙️ <b>${GROUPS[g]}</b>`, "", ...rows, "",
+          `<i>${extra} ${HINT[g] ?? ""}</i>`].join("\n");
 }
 
-function settingsKeyboard() {
+function optLabel(key, v) {
+  if (key === "tz") return `+${v}`;
+  if (key === "report_hour") return `${v}:00`;
+  if (key === "only_list") return v ? "только список" : "оборот + список";
+  if (key === "be_at") return v >= 50 ? "на цели" : `${(v / 100).toFixed(2)}R`;
+  return v === 0 ? "выкл" : `${v}`;
+}
+
+function settingsKeyboard(g) {
   const kb = [];
-  for (const [key, p] of Object.entries(PARAMS)) {
-    const cur = num(key);
+  for (const key of paramsOf(g)) {
+    const p = PARAMS[key], cur = num(key);
     kb.push([{ text: `— ${p.title} —`, callback_data: "noop" }]);
     kb.push(p.opts.map(v => ({
-      text: (v === cur ? "• " : "") +
-            (key === "tz" ? `+${v}` :
-             key === "report_hour" ? `${v}:00` :
-             v === 0 ? "выкл" : `${v}`),
-      callback_data: `cfg:${key}:${v}`,
+      text: (v === cur ? "• " : "") + optLabel(key, v),
+      callback_data: `cfg:${key}:${v}:${g}`,
     })));
   }
+  kb.push(Object.keys(GROUPS).map(k => ({
+    text: (k === g ? "· " : "") + GROUPS[k].split(" ")[0],
+    callback_data: `sec:${k}`,
+  })));
   return kb;
 }
 
@@ -134,6 +148,33 @@ async function onMonthly(m) {
   log(`месячный итог ${m}: ${csv.count} сделок`);
 }
 
+// --- список монет ---------------------------------------------------------
+const sig = (n) => `${n} ${plural(n, ["сигнал", "сигнала", "сигналов"])}`;
+const prof = (n) => `${n} ${plural(n, ["прибыльный", "прибыльных", "прибыльных"])}`;
+
+function analysisText(symbol, res) {
+  const good = res.filter(r => !r.short);
+  const lines = res.map(r => {
+    if (r.short)
+      return `▫️ <b>${r.id}</b>\n   <i>мало истории — ${r.days.toFixed(0)} дн, ` +
+             `${r.bars ?? 0} свечей</i>`;
+    const pct = r.n ? Math.round(r.win / r.n * 100) : 0;
+    const mark = r.n === 0 ? "▫️" : r.avgR > 0 ? "✅" : "🔻";
+    return `${mark} <b>${r.id}</b>\n` +
+      `   ${sig(r.n)} · ${prof(r.win)} (${pct}%) · стопов ${r.stops}\n` +
+      `   <i>ср. ${r.avgR > 0 ? "+" : ""}${r.avgR.toFixed(2)}R · ${r.perWeek.toFixed(1)} в неделю</i>`;
+  });
+  const tot = good.reduce((a, r) => a + r.n, 0);
+  const totWin = good.reduce((a, r) => a + r.win, 0);
+  const days = good.length ? Math.round(Math.max(...good.map(r => r.days))) : 0;
+  return [
+    `🔎 <b>${symbol}</b> · разбор за ${days} дн`, "",
+    ...lines, "",
+    tot ? `<b>Итого ${sig(tot)}, ${prof(totWin)} (${Math.round(totWin / tot * 100)}%)</b>`
+        : "<b>Сигналов за период не было</b>",
+  ].join("\n");
+}
+
 // --- команды ----------------------------------------------------------------
 const HELP = `<b>Что я умею</b>
 
@@ -141,7 +182,10 @@ const HELP = `<b>Что я умею</b>
 /focus — бросить всё и следить только за взятыми сделками
 /scan — вернуться к поиску новых монет
 /pulse — включить/выключить сводку по рынку
-/settings — интервалы скана, пульса, присмотра и час отчёта
+/settings — интервалы, монеты, риск, отчёты (четыре раздела)
+/coins — мой список монет
+/add ZECUSDT — разобрать историю за полгода и добавить
+/del ZECUSDT — убрать из списка
 
 /positions — открытые сделки, текущий результат, закрыть вручную
 
@@ -153,7 +197,7 @@ const HELP = `<b>Что я умею</b>
 /help — это сообщение
 
 <i>Telegram понимает только латиницу в командах, но я отзываюсь и на русские:
-/статус /фокус /скан /пульс /настройки /сделки /итоги /журнал /стата /доступ /помощь</i>
+/статус /фокус /скан /пульс /настройки /монеты /сделки /итоги /журнал /стата /доступ /помощь</i>
 
 <i>Сигналы приходят карточкой с кнопками «Взял» и «Пропустил».
 По взятой сделке вся история — ниткой ответов под карточкой:
@@ -297,7 +341,7 @@ async function onMessage(msg) {
     }
 
     case "/settings": case "/настройки":
-      await send(chatId, settingsView(), settingsKeyboard());
+      await send(chatId, settingsView("ритм"), settingsKeyboard("ритм"));
       break;
     case "/positions": case "/сделки": {
       const ps = openPositions();
@@ -318,6 +362,72 @@ async function onMessage(msg) {
         ].filter(Boolean).join("\n"),
         [[{ text: "⚫️ Закрыть вручную", callback_data: `close:${p.id}` }]]);
       }
+      break;
+    }
+
+    case "/coins": case "/монеты": {
+      const rows = WL.list();
+      if (!rows.length) {
+        await send(chatId,
+          "📋 <b>Мой список пуст</b>\n\n" +
+          "Сейчас бот берёт пары автоматически, по обороту.\n\n" +
+          "Добавить монету: <code>/add ZECUSDT</code>\n" +
+          "Перед добавлением он разберёт её историю за полгода и покажет, " +
+          "сколько сигналов дала каждая стратегия и сколько из них были прибыльными.");
+        break;
+      }
+      await send(chatId,
+        `📋 <b>Мой список — ${rows.length} ${plural(rows.length, ["монета","монеты","монет"])}</b>\n` +
+        `<i>Источник пар: ${fmtVal("only_list")}</i>\n\n` +
+        `Добавить: <code>/add SYMBOL</code> · убрать: <code>/del SYMBOL</code>`);
+      for (const r of rows) {
+        let st = "";
+        try {
+          const a = JSON.parse(r.stats || "[]").filter(z => !z.short);
+          const n = a.reduce((s, z) => s + z.n, 0);
+          const w = a.reduce((s, z) => s + z.win, 0);
+          if (n) st = `\n<i>по истории: ${sig(n)}, ${prof(w)} (${Math.round(w/n*100)}%)</i>`;
+        } catch { /* без статистики тоже сойдёт */ }
+        await send(chatId, `<b>${esc(r.symbol)}</b>${st}`,
+          [[{ text: "🗑 Убрать", callback_data: `wldel:${r.symbol}` }]]);
+      }
+      break;
+    }
+
+    case "/add": case "/добавить": {
+      const sym = WL.normalize(text.split(/\s+/)[1]);
+      if (!sym) { await send(chatId, "Так: <code>/add ZECUSDT</code> или просто <code>/add zec</code>"); break; }
+      if (WL.has(sym)) { await send(chatId, `<b>${esc(sym)}</b> уже в списке.`); break; }
+      const bad = await WL.check(sym);
+      if (bad) { await send(chatId, `<b>${esc(sym)}</b> — ${bad}`); break; }
+
+      const wait = await send(chatId, `🔎 Разбираю <b>${esc(sym)}</b> за полгода, это секунд десять…`);
+      try {
+        const res = await WL.analyze(sym, STRATEGIES, 6);
+        if (WL.noHistory(res)) {
+          const t = `<b>${esc(sym)}</b> — истории не хватает даже на прогрев ` +
+                    `индикаторов. Монета слишком молодая или биржа не отдаёт свечи.`;
+          if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+          break;
+        }
+        WL.add(sym, res);
+        logEvent({ kind: "note", symbol: sym, text: "монета добавлена в список" });
+        const txt = analysisText(sym, res) +
+          `\n\n✅ <b>Добавлена в список</b> — теперь сканируется всегда.`;
+        if (wait) await editText(chatId, wait.message_id, txt);
+        else await sendLong(chatId, txt);
+      } catch (e) {
+        await send(chatId, `Не смог разобрать <b>${esc(sym)}</b>: ${esc(e.message)}`);
+      }
+      break;
+    }
+
+    case "/del": case "/убрать": {
+      const sym = WL.normalize(text.split(/\s+/)[1]);
+      if (!sym) { await send(chatId, "Так: <code>/del ZECUSDT</code>"); break; }
+      await send(chatId, WL.remove(sym)
+        ? `🗑 <b>${esc(sym)}</b> убрана из списка.`
+        : `<b>${esc(sym)}</b> в списке не было.`);
       break;
     }
 
@@ -393,14 +503,33 @@ async function onCallback(q) {
 
   if (act0 === "noop") { await answerCallback(q.id); return; }
 
+  if (act0 === "sec") {
+    const g = String(q.data).split(":")[1];
+    if (!GROUPS[g]) { await answerCallback(q.id); return; }
+    await answerCallback(q.id);
+    await editText(chatId, q.message.message_id, settingsView(g), settingsKeyboard(g));
+    return;
+  }
+
   if (act0 === "cfg") {
     if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
-    const [, key, raw] = String(q.data).split(":");
+    const [, key, raw, g] = String(q.data).split(":");
     if (!PARAMS[key]) { await answerCallback(q.id, "Неизвестный параметр"); return; }
     setNum(key, Number(raw));
     logEvent({ kind: "note", text: `настройка ${key} = ${raw}` });
+    const grp = GROUPS[g] ? g : PARAMS[key].g;
     await answerCallback(q.id, `${PARAMS[key].title}: ${fmtVal(key)}`);
-    await editText(chatId, q.message.message_id, settingsView(), settingsKeyboard());
+    await editText(chatId, q.message.message_id, settingsView(grp), settingsKeyboard(grp));
+    return;
+  }
+
+  if (act0 === "wldel") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
+    const sym = String(q.data).split(":")[1];
+    WL.remove(sym);
+    logEvent({ kind: "note", text: `монета убрана из списка: ${sym}` });
+    await answerCallback(q.id, `${sym} убрана`);
+    await editText(chatId, q.message.message_id, `🗑 <b>${esc(sym)}</b> убрана из списка`);
     return;
   }
 
@@ -530,7 +659,9 @@ async function main() {
     { command: "focus",  description: "следить только за взятыми сделками" },
     { command: "scan",   description: "искать новые точки входа" },
     { command: "pulse",  description: "включить/выключить сводку по рынку" },
-    { command: "settings", description: "интервалы скана, пульса, отчётов" },
+    { command: "settings", description: "интервалы, монеты, риск, отчёты" },
+    { command: "coins",  description: "мой список монет" },
+    { command: "add",    description: "добавить монету с разбором истории" },
     { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },

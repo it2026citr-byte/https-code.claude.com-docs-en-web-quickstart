@@ -40,6 +40,49 @@ export async function fetchKlines(symbol, tf, limit = 300) {
   return out;
 }
 
+/**
+ * Глубокая история: биржа отдаёт максимум 500 свечей за раз, поэтому
+ * идём окнами назад по времени. Нужна для разбора монеты при добавлении
+ * в список — полгода часовых свечей это примерно 4400 баров.
+ */
+export async function deepHistory(symbol, tf, want) {
+  const iv = TF_MAP[tf];
+  if (!iv) throw new Error(`неизвестный таймфрейм ${tf}`);
+  const sec = TF_SEC[tf];
+  const out = [];
+  let end = Date.now();
+
+  while (out.length < want) {
+    const start = end - 500 * sec * 1000;
+    const url = `${BASE}/klines?symbol=${symbol}&interval=${iv}` +
+                `&startTime=${start}&endTime=${end}&limit=500`;
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const raw = await res.json();
+    if (!Array.isArray(raw) || !raw.length) break;
+    const part = raw.map(k => ({
+      t: Math.floor(k[0] / 1000), o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
+    }));
+    out.unshift(...part);
+    if (part.length < 400) break;              // история кончилась
+    end = part[0].t * 1000 - 1;
+  }
+
+  const seen = new Set(), uniq = [];
+  for (const c of out) if (!seen.has(c.t)) { seen.add(c.t); uniq.push(c); }
+  uniq.sort((a, b) => a.t - b.t);
+  return uniq.slice(-want);
+}
+
+/** Есть ли такая пара на бирже. */
+export async function pairExists(symbol) {
+  try {
+    const r = await fetch(`${BASE}/ticker/price?symbol=${symbol}`);
+    if (!r.ok) return false;
+    return Boolean((await r.json()).price);
+  } catch { return false; }
+}
+
 /** Последняя цена по паре. */
 export async function lastPrice(symbol) {
   const res = await fetch(`${BASE}/ticker/price?symbol=${symbol}`);

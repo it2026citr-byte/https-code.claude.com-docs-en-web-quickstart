@@ -5,6 +5,8 @@ import { fetchKlines, TF_SEC } from "./data/mexc.js";
 import { candles } from "./candles.js";
 import { dailyVolatility } from "./indicators.js";
 import { logEvent } from "./journal.js";
+import { num } from "./runtime.js";
+import { symbols as watchSymbols } from "./watchlist.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 async function mapLimit(items, n, fn) {
@@ -56,7 +58,15 @@ async function volatility(symbol) {
  */
 export async function scanMarket(strategies, onSignal) {
   if (!strategies.length) return { pairs: 0, signals: 0 };
-  const pairs = await topPairs();
+
+  // Монеты из моего списка сканируются всегда, независимо от оборота.
+  // Настройка «только мой список» отключает автоподбор совсем.
+  const manual = watchSymbols();
+  const onlyList = num("only_list") === 1;
+  const auto = onlyList ? [] : await topPairs();
+  const seen = new Set(auto.map(p => p.symbol));
+  const pairs = [...auto, ...manual.filter(s => !seen.has(s)).map(s => ({ symbol: s }))];
+  if (!pairs.length) { log("сканировать нечего: список пуст и автоподбор выключен"); return { pairs: 0, signals: 0 }; }
   const tfs = [...new Set(strategies.map(s => s.timeframe))];
   const found = [];
 
