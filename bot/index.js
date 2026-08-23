@@ -15,6 +15,7 @@ import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./
 import * as WL from "./watchlist.js";
 import { tuneStrategy } from "./tune.js";
 import * as ZN from "./zones.js";
+import * as PZ from "./data/prizrak.js";
 import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
@@ -406,6 +407,7 @@ const HELP = `<b>Что я умею</b>
 /add ZECUSDT — разобрать историю за полгода и добавить
 /tune ZECUSDT — заново подобрать параметры под монету
 /zones — зоны интереса, за которыми слежу
+/levels 2 — загрузить уровни из канала за 2 месяца
 /zone SOLUSDT long 81 82.1 — задать зону руками
 /del ZECUSDT — убрать из списка
 
@@ -671,6 +673,93 @@ async function onMessage(msg) {
         else await sendLong(chatId, txt);
       } catch (e) {
         await send(chatId, `Не смог разобрать <b>${esc(sym)}</b>: ${esc(e.message)}`);
+      }
+      break;
+    }
+
+    case "/levels": case "/уровни": {
+      const mon = Math.min(6, Math.max(1, Number(text.split(/\s+/)[1]) || 2));
+      const wait = await send(chatId, `📥 Читаю канал уровней за ${mon} мес…`);
+      try {
+        const list = await PZ.posts(mon);
+        const rows = PZ.levels(list);
+        if (!rows.length) {
+          const t = `Постов прочитал ${list.length}, уровней не нашёл — ` +
+                    `видимо в канале сменился формат записи.`;
+          if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+          break;
+        }
+
+        // Оставляем только то, чем бот реально может торговать.
+        if (wait) await editText(chatId, wait.message_id,
+          `🔎 Уровней ${rows.length}. Проверяю по свечам, какие уже отработаны — это минута-две…`);
+        const syms = [...new Set(rows.flatMap(r => (r.pairs ?? [r.pair]).map(x => x + "USDT")))];
+        const px = await prices(syms).catch(() => ({}));
+
+        // Зона принадлежит той монете, рядом с чьей ценой она стоит:
+        // отклонение больше чем в полтора раза — точно не та монета.
+        const pick = (r) => {
+          const mid = (r.lo + r.hi) / 2;
+          let best = null, bd = Infinity;
+          for (const t of r.pairs ?? [r.pair]) {
+            const p = px[t + "USDT"];
+            if (p == null) continue;
+            const d = Math.abs(Math.log(mid / p));
+            if (d < bd) { bd = d; best = t; }
+          }
+          return bd < Math.log(2.5) ? best : null;
+        };
+
+        let added = 0, noPair = 0, far = 0, dup = 0, done = 0;
+        const seen = new Set();
+        for (const r of rows) {
+          const owner = pick(r);
+          if (!owner) { noPair++; continue; }
+          const sym = owner + "USDT";
+          const p = px[sym];
+          if (p == null) { noPair++; continue; }
+          const side = r.hi < p ? "long" : r.lo > p ? "short" : null;
+          if (!side) { far++; continue; }         // цена внутри зоны — уже поздно
+          const away = (side === "long" ? p - r.hi : r.lo - p) / p * 100;
+          if (away > 30) { far++; continue; }     // до такого уровня идти месяцами
+          const key = `${sym}|${side}|${r.lo.toPrecision(6)}|${r.hi.toPrecision(6)}`;
+          if (seen.has(key)) { dup++; continue; }
+          seen.add(key);
+          const was = ZN.forSymbol(sym).find(z =>
+            z.side === side && Math.abs(z.lo - r.lo) / r.lo < 0.005 &&
+            Math.abs(z.hi - r.hi) / r.hi < 0.005);
+          if (was) { dup++; continue; }
+
+          // Уровень, к которому цена уже приходила после публикации, —
+          // отработанный: он свою роль сыграл, ждать там больше нечего.
+          const since = Date.parse(r.date || "") || 0;
+          if (since) {
+            const bars = Math.min(4000, Math.ceil((Date.now() - since) / 3600_000) + 2);
+            const c = await deepHistory(sym, "1h", bars).catch(() => []);
+            const from = c.filter(b => b.t * 1000 >= since);
+            if (from.some(b => b.l <= r.hi && b.h >= r.lo)) { done++; continue; }
+          }
+
+          ZN.add({ symbol: sym, side, lo: r.lo, hi: r.hi,
+                   note: `канал · ${r.date?.slice(0, 10) ?? ""}`, source: "channel" });
+          added++;
+        }
+        logEvent({ kind: "note", text: `из канала загружено зон: ${added}` });
+        const t =
+          `📥 <b>Уровни из канала за ${mon} мес</b>\n\n` +
+          `Прочитал постов: ${list.length}\n` +
+          `Нашёл уровней: ${rows.length}\n\n` +
+          `✅ Добавлено: <b>${added}</b> — цена туда ещё не приходила\n` +
+          `▫️ Уже отработаны, цена там побывала: ${done}\n` +
+          `▫️ Нет пары на бирже: ${noPair}\n` +
+          `▫️ Цена внутри зоны или дальше 30%: ${far}\n` +
+          `▫️ Повторы: ${dup}\n\n` +
+          `<i>Добавлены как непринятые: посмотри <code>/zones</code> и прими ` +
+          `кнопкой те, что считаешь рабочими. Сторожить цену буду по всем, ` +
+          `но сигнал дам только по принятым.</i>`;
+        if (wait) await editText(chatId, wait.message_id, t); else await sendLong(chatId, t);
+      } catch (e) {
+        await send(chatId, `Не смог прочитать канал: ${esc(e.message)}`);
       }
       break;
     }
@@ -1083,6 +1172,7 @@ async function main() {
     { command: "add",    description: "добавить монету с разбором истории" },
     { command: "tune",   description: "заново подобрать параметры под монету" },
     { command: "zones",  description: "зоны интереса, за которыми слежу" },
+    { command: "levels", description: "загрузить уровни из канала" },
     { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },
