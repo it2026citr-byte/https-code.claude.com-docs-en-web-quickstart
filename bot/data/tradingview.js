@@ -26,7 +26,17 @@ const STABLE = /^(USDC|FDUSD|TUSD|DAI|BUSD|USDE|USDP|PYUSD|EURT|EURS|USD1|USDD|X
  */
 export async function topPairs(limit = null) {
   const cap = limit ?? num("top_pairs");
-  const minUsd = num("min_turn_k") * 1000;
+
+  // Колонка volume у TradingView обнуляется в полночь UTC и копится
+  // в течение суток. В 00:20 UTC «суточный оборот» BTC показывает
+  // 3,5 млн вместо 546 млн, и порог в миллион проходят четыре пары
+  // вместо семидесяти — бот слепнет на полночи.
+  //
+  // Поэтому порог масштабируется по доле прошедших суток. Нижняя
+  // граница в 2% нужна, чтобы в первые минуты после полуночи он
+  // не схлопнулся в ноль.
+  const dayFrac = Math.max(0.02, (Date.now() % 86_400_000) / 86_400_000);
+  const minUsd = num("min_turn_k") * 1000 * dayFrac;
   const j = await scan({
     filter: [
       { left: "exchange", operation: "equal", right: "MEXC" },
@@ -38,17 +48,31 @@ export async function topPairs(limit = null) {
   });
 
   const rows = [];
+  const all = [];
   for (const r of j.data || []) {
     const [name, close, volume, change] = r.d;
     if (!name || !close || !volume) continue;
     if (STABLE.test(name)) continue;
     if (/\d+(L|S)USDT$/.test(name)) continue;       // плечевые токены
     const volUsd = volume * close;
+    all.push({ symbol: name, close, volUsd, change });
     if (volUsd < minUsd) continue;
     rows.push({ symbol: name, close, volUsd, change });
   }
   rows.sort((a, b) => b.volUsd - a.volUsd);
-  log(`TradingView: ${j.totalCount} пар, порог ${(minUsd/1000).toFixed(0)} тыс $ → ` +
-      `${rows.length}, берём ${Math.min(cap, rows.length)}`);
-  return rows.slice(0, cap);
+
+  // Страховка: если после фильтра осталась горстка, берём верхушку
+  // списка как есть. Лучше торговать по чуть менее ликвидным парам,
+  // чем не видеть рынок вовсе.
+  let out = rows.slice(0, cap);
+  let note = "";
+  if (out.length < Math.min(20, cap)) {
+    out = all.sort((a, b) => b.volUsd - a.volUsd).slice(0, cap);
+    note = " (порог снят, слишком мало прошло)";
+  }
+
+  log(`TradingView: ${j.totalCount} пар · порог ${(minUsd/1000).toFixed(0)} тыс $ ` +
+      `(${(dayFrac*100).toFixed(0)}% суток UTC) → прошло ${rows.length}, ` +
+      `берём ${out.length}${note}`);
+  return out;
 }
