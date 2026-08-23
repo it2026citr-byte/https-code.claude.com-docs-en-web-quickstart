@@ -91,6 +91,11 @@ export async function topPairs(limit = null) {
     if (/\d+(L|S)USDT$/.test(name)) continue;       // плечевые токены
     // Торгуем фьючерсами — спотовые пары без контракта нам не нужны.
     if (perp && !perp.has(name)) { noFut++; continue; }
+    // Токенизированные акции торгуются и когда биржа акций закрыта,
+    // из-за чего у них зашкаливает ставка финансирования по причинам,
+    // к крипте отношения не имеющим. Нам они не нужны.
+    if (/STOCK/i.test(name)) continue;
+
     const volUsd = volume * close;
     all.push({ symbol: name, close, volUsd, change });
     if (volUsd < minUsd) continue;

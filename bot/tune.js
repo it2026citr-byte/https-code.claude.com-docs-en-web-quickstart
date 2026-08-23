@@ -66,7 +66,7 @@ const combos = (grid) => {
   return out;
 };
 
-export async function tuneStrategy(strategy, candles, hold) {
+export async function tuneStrategy(strategy, candles, hold, symbol) {
   const beAt = num("be_at") / 100;
   const c = candles;
   const warm = strategy.warmup;
@@ -75,14 +75,14 @@ export async function tuneStrategy(strategy, candles, hold) {
 
   const edge = Math.floor(warm + (usable - warm) * SPLIT);
   const base = strategy;
-  const baseX = base.prepare(c);
+  const baseX = base.prepare(c, symbol);
   const baseTrain = score(base, c, baseX, warm, edge, hold, beAt);
   const baseTest = score(base, c, baseX, edge, usable, hold, beAt);
 
   let best = null;
   for (const p of combos(strategy.tunable)) {
     const v = strategy.make(p);
-    const x = v.prepare(c);
+    const x = v.prepare(c, symbol);
     const tr = score(v, c, x, warm, edge, hold, beAt);
     if (tr.n < MIN_SIGNALS) continue;
     if (!best || tr.sumR > best.train.sumR) best = { params: p, train: tr, variant: v, x };

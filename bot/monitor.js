@@ -174,7 +174,7 @@ export async function monitorTick({ strategies, notify, focus }) {
     catch (e) { log(`свечи ${p.symbol} не пришли:`, e.message); continue; }
     if (c.length < 160) continue;
 
-    const x = st.prepare(c);
+    const x = st.prepare(c, p.symbol);
     const iClosed = c.length - 2;
     const iLive = c.length - 1;
 

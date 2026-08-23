@@ -107,13 +107,43 @@ async function onUpdate(f, pos) {
   return true;
 }
 
+/**
+ * Первый этап сигнала: монета взята на прицел, входа ещё нет.
+ * Шлём по одному разу на монету в сутки — это контекст, а не команда.
+ */
+async function onWatching(list) {
+  if (!list?.length) return 0;
+  let sent = 0;
+  for (const w of list) {
+    const key = `watch:${w.symbol}:${w.strategy}`;
+    const was = Number(getSetting(key, 0));
+    if (now() - was < 24 * 3600) continue;
+    setSetting(key, now());
+    const openNow = openPositions().some(p => p.symbol === w.symbol);
+    if (openNow) continue;                       // по этой монете уже стоим
+    await broadcast(
+      `👀 <b>Взял на прицел</b> · ${esc(w.strategy)}\n` +
+      `<b>${esc(w.symbol)}</b> · ${fmtPrice(w.price)}\n` +
+      `Ставка финансирования <b>${w.rate.toFixed(3)}%</b> — рынок доплачивает ` +
+      `за лонги, это признак живого импульса.\n` +
+      `Жду подтверждения: цена должна пробить <b>${fmtPrice(w.need)}</b> ` +
+      `(${w.awayPct.toFixed(1)}% отсюда).\n` +
+      `<i>Это ещё не сигнал. Войду и напишу, когда цена подтвердит.</i>`);
+    sent++;
+    if (sent >= 5) break;                        // не заливаем чат
+  }
+  return sent;
+}
+
 async function scanTick() {
   const t0 = Date.now();
   const r = await scanMarket(STRATEGIES, onSignal, onUpdate);
   setSetting("last_market_seen", now());
   setSetting("universe_size", r.pairs);
+  const watched = await onWatching(r.watching).catch(() => 0);
   log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, выдано ${r.signals}, ` +
-      `правок по открытым ${r.updates ?? 0}, ${((Date.now() - t0) / 1000).toFixed(1)}с`);
+      `правок по открытым ${r.updates ?? 0}, на прицеле ${watched}, ` +
+      `${((Date.now() - t0) / 1000).toFixed(1)}с`);
 }
 
 /** Пульс: короткая сводка по рынку, живёт своим интервалом. */
@@ -689,7 +719,7 @@ async function onMessage(msg) {
         for (const st of STRATEGIES) {
           const c = await WL.candlesFor(sym, st).catch(() => null);
           if (!c) continue;
-          const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48).catch(() => null);
+          const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48, sym).catch(() => null);
           if (!t) continue;
           if (t.chosen) tuned[st.id] = t.params;
           tuneRows.push({ id: st.id, ...t });
@@ -934,7 +964,7 @@ async function onMessage(msg) {
       for (const st of STRATEGIES) {
         const c = await WL.candlesFor(sym, st).catch(() => null);
         if (!c) continue;
-        const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48).catch(() => null);
+        const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48, sym).catch(() => null);
         if (!t) continue;
         if (t.chosen) tuned[st.id] = t.params;
         rows.push({ id: st.id, ...t });

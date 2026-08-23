@@ -7,6 +7,7 @@ import { dailyVolatility } from "./indicators.js";
 import { logEvent } from "./journal.js";
 import { num } from "./runtime.js";
 import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
+import { refresh as refreshFunding } from "./data/funding.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 async function mapLimit(items, n, fn) {
@@ -69,6 +70,11 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   if (!pairs.length) { log("сканировать нечего: список пуст и автоподбор выключен"); return { pairs: 0, signals: 0 }; }
   const tfs = [...new Set(strategies.map(s => s.timeframe))];
   const found = [];
+  const watching = [];
+
+  // Ставки финансирования нужны стратегии Funding-Impulse. Тянем один
+  // раз на скан: биржа отдаёт все контракты сразу.
+  if (strategies.some(s => s.needsFutures)) await refreshFunding();
 
   await mapLimit(pairs, 6, async (p) => {
     const fired = [];       // сработавшие стратегии по этой паре
@@ -86,11 +92,17 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
         if (base.timeframe !== tf) continue;
         const own = tuned?.[base.id];
         const s = own && base.make ? base.make(own) : base;
-        const x = s.prepare(c);
+        const x = s.prepare(c, p.symbol);
         const cc = s.conditions ? s.conditions(c, x, i) : null;
         if (cc) cond.push({ id: s.id, cc });
         const sig = s.evaluate(c, x, i);
         if (sig) fired.push({ ...sig, strategy: s.id, tf, barTime: c[i].t, tuned: Boolean(own) });
+        // Первый этап без второго — монета на прицеле, но входа ещё нет.
+        else if (s.watching) {
+          const w = s.watching(c, x, i);
+          if (w) watching.push({ symbol: p.symbol, strategy: s.id, price: c[i].c,
+                                 barTime: c[i].t, ...w });
+        }
       }
     }
     if (!fired.length) return;
@@ -156,14 +168,15 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
     sent++;
   }
 
-  return { pairs: pairs.length, candidates: found.length, signals: sent, updates: updated };
+  return { pairs: pairs.length, candidates: found.length, signals: sent,
+           updates: updated, watching };
 }
 
 /** Индикаторы по одной паре — для монитора позиций. */
 export async function contextFor(strategy, symbol) {
   const c = await fetchKlines(symbol, strategy.timeframe, 300);
   if (c.length < 160) return null;
-  return { c, x: strategy.prepare(c), i: c.length - 2 };
+  return { c, x: strategy.prepare(c, symbol), i: c.length - 2 };
 }
 
 export { TF_SEC };
