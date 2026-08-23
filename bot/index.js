@@ -153,26 +153,42 @@ async function onMonthly(m) {
 const sig = (n) => `${n} ${plural(n, ["сигнал", "сигнала", "сигналов"])}`;
 const prof = (n) => `${n} ${plural(n, ["прибыльный", "прибыльных", "прибыльных"])}`;
 
+const TF_RU = { "5m": "5 мин", "15m": "15 мин", "1h": "1 час", "4h": "4 часа" };
+
 function analysisText(symbol, res) {
   const good = res.filter(r => !r.short);
+  const age = res[0]?.age ?? 0;
+  const young = res.some(r => r.native === false);
+
   const lines = res.map(r => {
+    const tf = `<i>${TF_RU[r.tf] ?? r.tf}</i>`;
     if (r.short)
-      return `▫️ <b>${r.id}</b>\n   <i>мало истории — ${r.days.toFixed(0)} дн, ` +
-             `${r.bars ?? 0} свечей</i>`;
+      return `▫️ <b>${r.id}</b> · ${tf}\n   <i>мало истории — ${r.bars ?? 0} свечей</i>`;
     const pct = r.n ? Math.round(r.win / r.n * 100) : 0;
     const mark = r.n === 0 ? "▫️" : r.avgR > 0 ? "✅" : "🔻";
-    return `${mark} <b>${r.id}</b>\n` +
+    return `${mark} <b>${r.id}</b> · ${tf}\n` +
       `   ${sig(r.n)} · ${prof(r.win)} (${pct}%) · стопов ${r.stops}\n` +
       `   <i>ср. ${r.avgR > 0 ? "+" : ""}${r.avgR.toFixed(2)}R · ${r.perWeek.toFixed(1)} в неделю</i>`;
   });
+
   const tot = good.reduce((a, r) => a + r.n, 0);
   const totWin = good.reduce((a, r) => a + r.win, 0);
-  const days = good.length ? Math.round(Math.max(...good.map(r => r.days))) : 0;
+
+  const tail = young ? [
+    "",
+    "<i>Монета моложе трёх месяцев, поэтому считалось на мелких свечах —",
+    "на часе у неё вышло бы один-два сигнала, а это не статистика.",
+    "С часовыми числами такие напрямую не сравнивай: стратегии настраивались",
+    "на часе, и на мелких свечах преимущество другое.",
+    "Живые сигналы всё равно пойдут на часе, когда история дорастёт.</i>",
+  ] : [];
+
   return [
-    `🔎 <b>${symbol}</b> · разбор за ${days} дн`, "",
+    `🔎 <b>${symbol}</b> · возраст ${age} дн`, "",
     ...lines, "",
     tot ? `<b>Итого ${sig(tot)}, ${prof(totWin)} (${Math.round(totWin / tot * 100)}%)</b>`
         : "<b>Сигналов за период не было</b>",
+    ...tail,
   ].join("\n");
 }
 

@@ -63,26 +63,60 @@ function simulate(c, i, long, entry, dist, hold, beAt) {
            hit, stopped: false };
 }
 
+const BARS_PER_DAY = { "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1 };
+
+/** Сколько дней монета вообще торгуется. */
+export async function ageDays(symbol) {
+  const d = await deepHistory(symbol, "1d", 400).catch(() => []);
+  if (d.length < 2) return 0;
+  return Math.round((d.at(-1).t - d[0].t) / 86400);
+}
+
+/**
+ * Молодой монете родного таймфрейма не хватает: за месяц жизни часовых
+ * свечей всего 720, а на прогрев индикаторов нужно 260 плюс запас.
+ * Поэтому спускаемся по лесенке — час, пятнадцать минут, пять, — пока
+ * не наберётся достаточно баров.
+ *
+ * Числа с мелких свечей с часовыми напрямую не сравнивать: стратегии
+ * настраивались на часе, и на пяти минутах преимущество другое.
+ */
+const WANT_BARS = 3000;          // столько баров хватает на осмысленную выборку
+
+function pickTf(native, age) {
+  for (const tf of [native, "15m", "5m"]) {
+    if (!BARS_PER_DAY[tf]) continue;
+    if (age * BARS_PER_DAY[tf] >= WANT_BARS) return tf;
+  }
+  return "5m";
+}
+
 export async function analyze(symbol, strategies, months = 6) {
   const beAt = num("be_at") / 100;
   const out = [];
   const byTf = new Map();
+  const age = await ageDays(symbol);
 
   for (const s of strategies) {
-    if (!byTf.has(s.timeframe)) {
-      const perDay = s.timeframe === "4h" ? 6 : s.timeframe === "1h" ? 24 : 96;
-      const want = Math.min(9000, Math.round(months * 30 * perDay) + 300);
-      byTf.set(s.timeframe, await deepHistory(symbol, s.timeframe, want));
+    // Старше трёх месяцев — считаем как обычно, на родном таймфрейме.
+    // Моложе — спускаемся к мелким свечам: на часе у месячной монеты
+    // выходит один-два сигнала, и это не статистика, а совпадение.
+    const tf = age >= 90 ? s.timeframe : pickTf(s.timeframe, age);
+
+    if (!byTf.has(tf)) {
+      const want = Math.min(9000, Math.round(months * 30 * BARS_PER_DAY[tf]) + 300);
+      byTf.set(tf, await deepHistory(symbol, tf, want).catch(() => []));
     }
-    const c = byTf.get(s.timeframe);
+    const c = byTf.get(tf);
     // Бывает, что пара торгуется, а свечей биржа не отдаёт — например
     // у металлов. Пустой массив тогда роняет расчёт, если не проверить.
     if (!c || c.length < s.warmup + 100) {
       const days = c && c.length > 1 ? (c.at(-1).t - c[0].t) / 86400 : 0;
-      out.push({ id: s.id, short: true, days, bars: c ? c.length : 0 });
+      out.push({ id: s.id, short: true, days, bars: c ? c.length : 0, tf, age });
       continue;
     }
-    const hold = s.timeframe === "4h" ? 12 : 48;
+    // Держим одинаковое время, а не одинаковое число баров.
+    const hold = Math.round(48 / (24 / BARS_PER_DAY[tf]));
     const x = s.prepare(c);
     let n = 0, win = 0, stops = 0, sumR = 0, t5 = 0;
     for (let i = s.warmup; i < c.length - 1 - hold; i++) {
@@ -96,7 +130,8 @@ export async function analyze(symbol, strategies, months = 6) {
       if (r.hit === 5) t5++;
     }
     const days = (c.at(-1).t - c[0].t) / 86400;
-    out.push({ id: s.id, n, win, stops, t5, days,
+    out.push({ id: s.id, n, win, stops, t5, days, tf, age,
+               native: tf === s.timeframe,
                avgR: n ? sumR / n : 0, perWeek: n ? n / days * 7 : 0 });
   }
   return out;
@@ -104,7 +139,9 @@ export async function analyze(symbol, strategies, months = 6) {
 
 export async function check(symbol) {
   if (!await pairExists(symbol)) return "нет такой пары на MEXC";
-  const probe = await deepHistory(symbol, "1h", 400).catch(() => []);
+  // Молодую монету не отсекаем — её разберём на мелких свечах.
+  // Отказываем только если свечей нет вовсе.
+  const probe = await deepHistory(symbol, "5m", 500).catch(() => []);
   if (probe.length < 300) return "пара есть, но биржа не отдаёт по ней свечи";
   return null;
 }
