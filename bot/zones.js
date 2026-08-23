@@ -71,56 +71,167 @@ export const rearm = (id) =>
  * в разборах называются «уровнями-ловушками». Человек потом решает,
  * какие оставить.
  */
-export function propose(c, { legs = 20, padAtr = 0.4, maxZones = 6, lookback = 600 } = {}) {
+/** Консолидации: окна, где цена держалась в узкой полосе. */
+function boxes(c, win = 12, maxPct = 3) {
+  const raw = [];
+  for (let i = win; i < c.length; i++) {
+    let hi = -Infinity, lo = Infinity;
+    for (let j = i - win; j < i; j++) {
+      if (c[j].h > hi) hi = c[j].h;
+      if (c[j].l < lo) lo = c[j].l;
+    }
+    if ((hi - lo) / ((hi + lo) / 2) * 100 <= maxPct) raw.push({ a: i - win, b: i, hi, lo });
+  }
+  const out = [];
+  for (const r of raw) {
+    const last = out[out.length - 1];
+    if (last && r.a <= last.b) {
+      last.b = r.b; last.hi = Math.max(last.hi, r.hi); last.lo = Math.min(last.lo, r.lo);
+    } else out.push({ ...r });
+  }
+  return out;
+}
+
+function swings(c, len = 5) {
+  const out = [];
+  for (let i = len; i < c.length - len; i++) {
+    let hi = true, lo = true;
+    for (let j = i - len; j <= i + len; j++) {
+      if (j === i) continue;
+      if (c[j].h >= c[i].h) hi = false;
+      if (c[j].l <= c[i].l) lo = false;
+    }
+    if (hi) out.push(c[i].h);
+    if (lo) out.push(c[i].l);
+  }
+  return out;
+}
+
+/** Цены, где накоплен объём: свеча разносит свой объём по своему диапазону. */
+function volumeNodes(c, bins = 160, topShare = 0.25) {
+  const hi = Math.max(...c.map(x => x.h)), lo = Math.min(...c.map(x => x.l));
+  if (!(hi > lo)) return [];
+  const step = (hi - lo) / bins, vol = new Array(bins).fill(0);
+  for (const b of c) {
+    const a = Math.max(0, Math.floor((b.l - lo) / step));
+    const z = Math.min(bins - 1, Math.floor((b.h - lo) / step));
+    for (let k = a; k <= z; k++) vol[k] += (b.v || 0) / (z - a + 1);
+  }
+  return [...vol.keys()].sort((x, y) => vol[y] - vol[x])
+    .slice(0, Math.max(3, Math.round(bins * topShare)))
+    .map(i => lo + (i + 0.5) * step);
+}
+
+function roundLevels(px) {
+  const mag = Math.pow(10, Math.floor(Math.log10(px)) - 1), out = [];
+  for (let k = -40; k <= 40; k++) {
+    const v = Math.round(px / mag + k) * mag;
+    if (v > 0) out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Кандидаты в зоны.
+ *
+ * Признаки и их вес выведены из 108 зон канала: каждый сравнивался
+ * со случайным уровнем по тому же набору, иначе густые наборы дают
+ * мнимое совпадение. Прибавка над случайностью:
+ *
+ *   граница консолидации  +17 пп   ← сильнейший, отсюда вес 2
+ *   мелкий свинг 1ч       +14 пп
+ *   узел объёма           +13 пп
+ *   круглое число         +12 пп
+ *
+ * Ни один признак сам по себе не воспроизводит его выбор, поэтому
+ * берём совпадение нескольких: уровень, за который голосуют три-четыре
+ * признака, встречается у него заметно чаще случайного.
+ */
+export const WEIGHTS = { box: 2, swing: 1, vol: 1, round: 1, touch: 0 };
+
+export function propose(c, opts = {}) {
+  const { maxZones = 6, minScore = 2, nearPct = 0.5 } = opts;
+  const W = { ...WEIGHTS, ...(opts.weights || {}) };
   const A = atr(c, 14);
   const i = c.length - 2;
-  const px = c[i].c, pad = padAtr * A[i];
-  if (!px || !A[i]) return [];
-  const from = Math.max(legs, i - lookback);
+  const px = c[i].c, a = A[i];
+  if (!px || !a) return [];
 
-  // Свинговые экстремумы: бар выше (ниже) соседей слева и справа.
-  const raw = [];
-  for (let j = from; j < i - legs; j++) {
-    let hi = true, lo = true;
-    for (let k = j - legs; k <= j + legs; k++) {
-      if (k === j) continue;
-      if (c[k].h >= c[j].h) hi = false;
-      if (c[k].l <= c[j].l) lo = false;
-    }
-    if (hi) raw.push({ lvl: c[j].h, bar: j });
-    if (lo) raw.push({ lvl: c[j].l, bar: j });
+  const bx = boxes(c);
+  const sw = swings(c);
+  const vn = volumeNodes(c);
+  const rn = roundLevels(px);
+  const near = (list, v) => list.some(x => Math.abs(x - v) / v * 100 <= nearPct);
+
+  // Кандидаты — границы боковиков и свинговые точки.
+  const cand = [];
+  for (const b of bx) {
+    cand.push({ lvl: b.lo, box: b, why: ["граница боковика"] });
+    cand.push({ lvl: b.hi, box: b, why: ["граница боковика"] });
+  }
+  for (const v of sw) cand.push({ lvl: v, box: null, why: ["свинговая точка"] });
+
+  for (const z of cand) {
+    z.score = z.box ? W.box : W.swing;
+    if (z.box && near(sw, z.lvl)) { z.score += W.swing; z.why.push("свинговая точка"); }
+    if (near(vn, z.lvl)) { z.score += W.vol; z.why.push("узел объёма"); }
+    if (near(rn, z.lvl)) { z.score += W.round; z.why.push("круглое число"); }
   }
 
-  // Слипаем близкие в один уровень: чем больше касаний, тем он весомее —
-  // ровно так уровень и выбирают глазом.
-  const clusters = [];
-  for (const r of raw.sort((x, y) => x.lvl - y.lvl)) {
-    const last = clusters[clusters.length - 1];
-    if (last && Math.abs(r.lvl - last.lvl) <= pad) {
-      last.lvl = (last.lvl * last.hits + r.lvl) / (last.hits + 1);
-      last.hits++;
-      last.bar = Math.max(last.bar, r.bar);
-    } else clusters.push({ lvl: r.lvl, hits: 1, bar: r.bar });
+  // Слипаем близкие, оставляя лучший балл.
+  cand.sort((x, y) => x.lvl - y.lvl);
+  const glue = a * 0.3, merged = [];
+  for (const z of cand) {
+    const last = merged[merged.length - 1];
+    if (last && Math.abs(z.lvl - last.lvl) <= glue) {
+      if (z.score > last.score) Object.assign(last, z);
+      last.hits = (last.hits || 1) + 1;
+    } else merged.push({ ...z, hits: 1 });
+  }
+  // Уровень, к которому история возвращалась много раз, весомее одиночного.
+  if (W.touch) for (const z of merged) z.score += W.touch * Math.min(4, z.hits - 1);
+
+  const out = [];
+  for (const z of merged) {
+    if (z.score < minScore) continue;
+    const side = z.lvl < px ? "long" : "short";
+    const away = Math.abs(z.lvl - px) / px * 100;
+    // Дальше пятнадцати процентов зона бесполезна: цена дойдёт нескоро,
+    // а к тому времени структура успеет перестроиться.
+    if (away < 0.4 || away > 15) continue;
+
+    // Зона от боковика берёт его границы — так рисует и он.
+    // Одиночный уровень обрастает половиной ATR.
+    let lo, hi;
+    if (z.box && (z.box.hi - z.box.lo) / px * 100 <= 9) { lo = z.box.lo; hi = z.box.hi; }
+    else { lo = z.lvl - 0.25 * a; hi = z.lvl + 0.25 * a; }
+    if (side === "long" && hi >= px) continue;
+    if (side === "short" && lo <= px) continue;
+
+    out.push({
+      side, lo, hi, level: z.lvl, score: z.score,
+      away: away.toFixed(1),
+      width: ((hi - lo) / px * 100).toFixed(1),
+      note: z.why.join(" + "),
+    });
   }
 
-  const cand = clusters
-    .map(z => ({ ...z, away: Math.abs(z.lvl - px) / px * 100,
-                 side: z.lvl < px ? "long" : "short" }))
-    .filter(z => z.away >= 0.4 && z.away <= 40);
+  // Одинаковые и вложенные зоны схлопываем: несколько окон боковика
+  // дают один и тот же диапазон.
+  const uniq = [];
+  for (const z of out.sort((x, y) => y.score - x.score)) {
+    const dup = uniq.find(u => u.side === z.side &&
+      Math.abs(u.lo - z.lo) / px * 100 < 0.5 && Math.abs(u.hi - z.hi) / px * 100 < 0.5);
+    const inside = uniq.find(u => u.side === z.side && z.lo >= u.lo && z.hi <= u.hi);
+    if (!dup && !inside) uniq.push(z);
+  }
 
-  const pick = (side, n) => cand.filter(z => z.side === side)
-    .sort((x, y) => (y.hits - x.hits) || (x.away - y.away))
-    .sort((x, y) => x.away - y.away)
+  // Сильные зоны важнее близких, но при равном балле берём ближнюю.
+  const pick = (side, n) => uniq.filter(z => z.side === side)
+    .sort((x, y) => (y.score - x.score) || (Number(x.away) - Number(y.away)))
     .slice(0, n);
-
   const half = Math.max(1, Math.round(maxZones / 2));
   return [...pick("long", half), ...pick("short", half)]
-    .map(z => ({
-      side: z.side, lo: z.lvl - pad, hi: z.lvl + pad, level: z.lvl,
-      away: z.away.toFixed(1), hits: z.hits,
-      note: `${z.hits} ${z.hits === 1 ? "касание" : z.hits < 5 ? "касания" : "касаний"}` +
-            `, последнее ${i - z.bar} ч назад`,
-    }))
     .sort((x, y) => Number(x.away) - Number(y.away));
 }
 
@@ -153,6 +264,24 @@ export function check(prices, { nearPct = 1.5, cooldownH = 12 } = {}) {
     }
   }
   return events;
+}
+
+/**
+ * Сделка от зоны: вход по текущей цене, стоп за дальней границей.
+ * В этом весь смысл входа от уровня — стоп рядом, значит то же движение
+ * стоит больше R.
+ */
+export function tradeFrom(zone, price, atrVal) {
+  const long = zone.side === "long";
+  const edge = long ? zone.lo : zone.hi;
+  const pad = 0.5 * (atrVal || Math.abs(zone.hi - zone.lo));
+  let dist = Math.abs(price - edge) + pad;
+  const minD = 0.8 * (atrVal || dist), maxD = 2.5 * (atrVal || dist);
+  dist = Math.min(Math.max(dist, minD), maxD);
+  const sl = long ? price - dist : price + dist;
+  const targets = [1, 2, 3, 4, 5].map(n =>
+    long ? price + 0.5 * n * dist : price - 0.5 * n * dist);
+  return { side: zone.side, entry: price, sl, targets, dist };
 }
 
 export const symbols = () =>

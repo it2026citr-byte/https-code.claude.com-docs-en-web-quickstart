@@ -9,9 +9,12 @@ import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
 import { topPairs } from "./data/tradingview.js";
 import { prices, lastPrice } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt } from "./monitor.js";
+import { candles } from "./candles.js";
+import { atr } from "./indicators.js";
 import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
 import * as WL from "./watchlist.js";
 import { tuneStrategy } from "./tune.js";
+import * as ZN from "./zones.js";
 import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
@@ -66,8 +69,56 @@ async function pulseTick() {
     `\n<i>вселенная ${getSetting("universe_size","—")} пар · в работе ${pos}</i>`);
 }
 
+async function zoneTick() {
+  const syms = ZN.symbols();
+  if (!syms.length) return;
+  let px;
+  try { px = await prices(syms); } catch { return; }
+
+  for (const ev of ZN.check(px)) {
+    const z = ev.zone;
+    const long = z.side === "long";
+    if (ev.kind === "near") {
+      await broadcast(
+        `🟡 <b>Цена подходит к зоне</b>\n` +
+        `${esc(z.symbol)} · ${long ? "лонг" : "шорт"} ` +
+        `${fmtPrice(z.lo)}–${fmtPrice(z.hi)}\n` +
+        `Сейчас ${fmtPrice(ev.price)} · до границы ${ev.distPct.toFixed(2)}%\n` +
+        `<i>${esc(z.note ?? "")}</i>`);
+      continue;
+    }
+
+    // Цена вошла в зону — это уже сигнал.
+    let a = null;
+    try {
+      const c = await candles(z.symbol, "1h", 300);
+      a = atr(c, 14).at(-2);
+    } catch { /* посчитаем от ширины зоны */ }
+    const t = ZN.tradeFrom(z, ev.price, a);
+
+    const r = db.prepare(
+      "INSERT OR IGNORE INTO signals(strategy,symbol,side,tf,entry,sl,targets," +
+      "reason,created_at,bar_time,status) VALUES(?,?,?,'1h',?,?,?,?,?,?,'new')"
+    ).run(`Зона ${fmtPrice(z.lo)}–${fmtPrice(z.hi)}`, z.symbol, z.side,
+          t.entry, t.sl, JSON.stringify(t.targets),
+          `Цена вошла в зону · ${z.note ?? "уровень"}`, now(), Math.floor(now() / 3600) * 3600);
+    if (!r.changes) continue;
+    const id = Number(r.lastInsertRowid);
+    logEvent({ kind: "signal", strategy: "Зона", symbol: z.symbol,
+               side: z.side, price: ev.price, text: "вход в зону" });
+    await broadcast(signalCard({
+      id, symbol: z.symbol, side: z.side, tf: "1h",
+      strategy: `Зона ${fmtPrice(z.lo)}–${fmtPrice(z.hi)}`,
+      entry: t.entry, sl: t.sl, targets: t.targets,
+      reason: `Цена вошла в зону ${fmtPrice(z.lo)}–${fmtPrice(z.hi)}\n${z.note ?? ""}`,
+    }), TAKE_KB(id));
+    log(`зона сработала: ${z.symbol} ${z.side} @ ${ev.price}`);
+  }
+}
+
 async function watchTick({ focus }) {
   const r = await monitorTick({ strategies: STRATEGIES, focus, notify: postUpdate });
+  await zoneTick().catch(e => log("зоны не проверились:", e.message));
   setSetting("last_market_seen", now());
   if (r.events)
     log(`присмотр${focus ? " (фокус)" : ""}: ${r.checked} позиций, событий ${r.events}`);
@@ -223,6 +274,8 @@ const HELP = `<b>Что я умею</b>
 /coins — мой список монет
 /add ZECUSDT — разобрать историю за полгода и добавить
 /tune ZECUSDT — заново подобрать параметры под монету
+/zones — зоны интереса, за которыми слежу
+/zone SOLUSDT long 81 82.1 — задать зону руками
 /del ZECUSDT — убрать из списка
 
 /positions — открытые сделки, текущий результат, закрыть вручную
@@ -485,6 +538,56 @@ async function onMessage(msg) {
       break;
     }
 
+    case "/zones": case "/зоны": {
+      const arg = WL.normalize(text.split(/\s+/)[1]);
+      const list = arg ? ZN.forSymbol(arg) : ZN.all();
+      if (!list.length) {
+        await send(chatId, arg
+          ? `По <b>${esc(arg)}</b> зон нет.\n\nПостроить: <code>/zones ${esc(arg)} новые</code>`
+          : "🎯 <b>Зон нет</b>\n\nОни появляются сами при <code>/add МОНЕТА</code>.\n" +
+            "Или задать вручную: <code>/zone SOLUSDT long 81 82.1</code>");
+        break;
+      }
+      await send(chatId, `🎯 <b>Зоны${arg ? " · " + esc(arg) : ""} — ${list.length}</b>\n` +
+        `<i>Бот следит за ценой и сигналит при подходе и входе в зону.</i>`);
+      for (const z of list) {
+        await send(chatId,
+          `${z.side === "long" ? "🟢 ЛОНГ" : "🔴 ШОРТ"} <b>${esc(z.symbol)}</b>\n` +
+          `${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}\n` +
+          `<i>${esc(z.note ?? "")}${z.source === "auto" ? " · построена ботом" : " · задана вручную"}</i>`,
+          [[{ text: "🗑 Убрать", callback_data: `zdel:${z.id}` },
+            { text: "🔄 Сбросить срабатывание", callback_data: `zarm:${z.id}` }]]);
+      }
+      break;
+    }
+
+    case "/zone": case "/зона": {
+      const p = text.split(/\s+/).slice(1);
+      if (p[0] === "del" || p[0] === "удалить") {
+        const ok = ZN.remove(Number(p[1]));
+        await send(chatId, ok ? "🗑 Зона убрана." : "Такой зоны нет.");
+        break;
+      }
+      const sym = WL.normalize(p[0]);
+      const side = /^(long|лонг|buy)$/i.test(p[1] ?? "") ? "long"
+                 : /^(short|шорт|sell)$/i.test(p[1] ?? "") ? "short" : null;
+      const lo = Number(String(p[2] ?? "").replace(",", "."));
+      const hi = Number(String(p[3] ?? "").replace(",", "."));
+      if (!sym || !side || !isFinite(lo) || !isFinite(hi) || lo <= 0 || hi <= 0) {
+        await send(chatId,
+          "Так: <code>/zone SOLUSDT long 81 82.1</code>\n" +
+          "или <code>/zone del 7</code> чтобы убрать.");
+        break;
+      }
+      const id = ZN.add({ symbol: sym, side, lo, hi, note: "задана вручную" });
+      logEvent({ kind: "note", symbol: sym, text: `зона задана вручную ${lo}–${hi}` });
+      await send(chatId,
+        `🎯 Зона добавлена: ${side === "long" ? "🟢 лонг" : "🔴 шорт"} ` +
+        `<b>${esc(sym)}</b> ${fmtPrice(Math.min(lo, hi))} — ${fmtPrice(Math.max(lo, hi))}\n` +
+        `<i>№${id}. Слежу за ценой.</i>`);
+      break;
+    }
+
     case "/tune": case "/подбор": {
       const sym = WL.normalize(text.split(/\s+/)[1]);
       if (!sym) { await send(chatId, "Так: <code>/tune ZECUSDT</code>"); break; }
@@ -605,6 +708,25 @@ async function onCallback(q) {
     const grp = GROUPS[g] ? g : PARAMS[key].g;
     await answerCallback(q.id, `${PARAMS[key].title}: ${fmtVal(key)}`);
     await editText(chatId, q.message.message_id, settingsView(grp), settingsKeyboard(grp));
+    return;
+  }
+
+  if (act0 === "zdel" || act0 === "zarm") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
+    const id = Number(String(q.data).split(":")[1]);
+    const z = ZN.get(id);
+    if (!z) { await answerCallback(q.id, "Зона не найдена"); return; }
+    if (act0 === "zdel") {
+      ZN.remove(id);
+      await answerCallback(q.id, "Убрана");
+      await editText(chatId, q.message.message_id,
+        `🗑 Зона ${esc(z.symbol)} ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} убрана`);
+    } else {
+      ZN.rearm(id);
+      await answerCallback(q.id, "Сброшено — сработает снова");
+      await editText(chatId, q.message.message_id,
+        `🔄 ${esc(z.symbol)} ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} · <i>сработает заново</i>`);
+    }
     return;
   }
 
@@ -753,6 +875,7 @@ async function main() {
     { command: "coins",  description: "мой список монет" },
     { command: "add",    description: "добавить монету с разбором истории" },
     { command: "tune",   description: "заново подобрать параметры под монету" },
+    { command: "zones",  description: "зоны интереса, за которыми слежу" },
     { command: "positions", description: "открытые сделки" },
     { command: "results", description: "итоги сигналов за сегодня" },
     { command: "log",    description: "итоги месяца и выгрузка файлами" },

@@ -1,6 +1,7 @@
 import { cfg, log } from "./config.js";
 import { getMode, MODE_FOCUS, openPositions, getSetting, setSetting } from "./db.js";
 import { num, reportHourUtc } from "./runtime.js";
+import { symbols as zoneSymbols } from "./zones.js";
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -35,7 +36,8 @@ export function startLoops({ scanTick, watchTick, pulseTick }) {
   (async function watchLoop() {
     for (;;) {
       const focus = getMode() === MODE_FOCUS;
-      const has = openPositions().length > 0;
+      // Присматривать нужно и когда сделок нет: зоны ждут цену сами по себе.
+      const has = openPositions().length > 0 || zoneSymbols().length > 0;
 
       if (!has) { await sleep(30_000); continue; }
 
