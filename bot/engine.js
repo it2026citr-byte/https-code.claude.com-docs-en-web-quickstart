@@ -183,7 +183,7 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   }
 
   return { pairs: pairs.length, candidates: found.length, signals: sent,
-           updates: updated, watching };
+           updates: updated, watching, symbols: pairs.map(p => p.symbol) };
 }
 
 export { TF_SEC };

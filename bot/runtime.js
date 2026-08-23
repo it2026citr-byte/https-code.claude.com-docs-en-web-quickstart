@@ -47,6 +47,8 @@ export const PARAMS = {
                      title: "Предупредить за",  unit: "% дневного хода" },
   zone_near_share: { g: "сделки", def: () => 10, opts: [20, 15, 10, 7, 5],
                      title: "Вплотную при",     unit: "% дневного хода" },
+  leadlag_on:      { g: "рынок", def: () => 1, opts: [1, 0],
+                     title: "Сканер отстающих", unit: "" },
 };
 
 export function num(key) {
@@ -70,6 +72,7 @@ export const fmtVal = (key) => {
   const p = PARAMS[key], v = num(key);
   if (key === "tz") return `UTC+${v}`;
   if (key === "only_list") return v ? "только мой список" : "оборот + мой список";
+  if (key === "leadlag_on") return v ? "включён" : "выключен";
   if (key === "be_at") return v >= 50 ? "на первой цели" : `${(v / 100).toFixed(2)}R`;
   if (key === "top_pairs") return `до ${v} пар`;
   if (key === "min_turn_k") return v >= 1000 ? `от ${v / 1000} млн $` : `от ${v} тыс $`;

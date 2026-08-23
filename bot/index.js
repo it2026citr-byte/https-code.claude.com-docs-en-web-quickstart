@@ -21,6 +21,7 @@ import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
 import { scanMarket } from "./engine.js";
+import { leadLag } from "./scanners.js";
 import { startLoops, startReports } from "./scheduler.js";
 import { fmtPrice, fmtPct, fmtUsd, fmtAgo, fmtTime } from "./format.js";
 import {
@@ -136,15 +137,60 @@ async function onWatching(list) {
   return sent;
 }
 
+/**
+ * Сканер отстающих. Работает поверх стратегий: ищет не сигнал в одной
+ * монете, а пару «лидер и повторяющий его с задержкой».
+ */
+async function leadLagTick(symbols) {
+  if (num("leadlag_on") !== 1) return 0;
+  let found;
+  try { found = await leadLag(symbols); }
+  catch (e) { log("сканер отстающих сорвался:", e.message); return 0; }
+
+  let sent = 0;
+  for (const f of found) {
+    // Та же связка не повторяется, пока не пройдёт остыв.
+    const key = `ll:${f.leader}:${f.symbol}`;
+    if (now() - Number(getSetting(key, 0)) < 8 * 3600) continue;
+    if (openPositions().some(p => p.symbol === f.symbol)) continue;
+    setSetting(key, now());
+
+    const name = `Отстающий за ${f.leader.replace("USDT", "")}`;
+    const reason =
+      `${f.leader.replace("USDT", "")} прошёл ${f.leaderMove > 0 ? "+" : ""}` +
+      `${f.leaderMove.toFixed(1)}% за 2 часа · график совпадает на ` +
+      `${(f.corr * 100).toFixed(0)}% со сдвигом ${f.lagMin} мин · ` +
+      `сама пока ${f.ownMove > 0 ? "+" : ""}${f.ownMove.toFixed(1)}%`;
+
+    const r = db.prepare(
+      "INSERT OR IGNORE INTO signals(strategy,symbol,side,tf,entry,sl,targets," +
+      "reason,created_at,bar_time,status) VALUES(?,?,?,'15m',?,?,?,?,?,?,'new')"
+    ).run(name, f.symbol, f.side, f.entry, f.sl, JSON.stringify(f.targets),
+          reason, now(), f.barTime);
+    if (!r.changes) continue;
+    const id = Number(r.lastInsertRowid);
+    logEvent({ kind: "signal", strategy: "Отстающий", symbol: f.symbol,
+               side: f.side, price: f.entry, text: reason });
+    await broadcast(signalCard({
+      id, symbol: f.symbol, side: f.side, tf: "15m", strategy: name,
+      entry: f.entry, sl: f.sl, targets: f.targets, reason,
+    }), TAKE_KB(id));
+    sent++;
+    if (sent >= 3) break;                 // не заливаем чат
+  }
+  return sent;
+}
+
 async function scanTick() {
   const t0 = Date.now();
   const r = await scanMarket(STRATEGIES, onSignal, onUpdate);
   setSetting("last_market_seen", now());
   setSetting("universe_size", r.pairs);
   const watched = await onWatching(r.watching).catch(() => 0);
+  const lag = await leadLagTick(r.symbols ?? []).catch(() => 0);
   log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, выдано ${r.signals}, ` +
       `правок по открытым ${r.updates ?? 0}, на прицеле ${watched}, ` +
-      `${((Date.now() - t0) / 1000).toFixed(1)}с`);
+      `отстающих ${lag}, ${((Date.now() - t0) / 1000).toFixed(1)}с`);
 }
 
 /** Пульс: короткая сводка по рынку, живёт своим интервалом. */
