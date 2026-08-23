@@ -52,6 +52,9 @@ strays() {
   for d in /proc/[0-9]*; do
     pid="${d#/proc/}"
     [ "$pid" = "$$" ] && continue
+    # Процесс мог умереть между перечислением и чтением — это норма,
+    # а не ошибка, поэтому просто пропускаем.
+    [ -r "$d/cmdline" ] || continue
     cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)" || continue
     [ -z "$cmd" ] && continue
     exe="${cmd%% *}"
@@ -61,6 +64,33 @@ strays() {
     esac
     case "$cmd" in
       *start.js*|*index.js*) echo "$pid" ;;
+    esac
+  done
+}
+
+# Забытые сторожа: их «stop» не берёт, потому что в pid-файле записан
+# только один. Из-за этого после restart оставался второй сторож,
+# который бесконечно поднимал бота, а тот сразу выходил по замку.
+# Не свой ли это предок. Оболочка, из которой запущен restart, содержит
+# имя скрипта в командной строке — без этой проверки скрипт убивал
+# терминал, из которого его позвали, вместе со всей цепочкой запуска.
+isAncestor() {
+  p=$$
+  while [ -n "$p" ] && [ "$p" != "0" ] && [ "$p" != "1" ]; do
+    [ "$p" = "$1" ] && return 0
+    p=$(awk '{print $4}' "/proc/$p/stat" 2>/dev/null)
+  done
+  return 1
+}
+
+straySupervisors() {
+  for d in /proc/[0-9]*; do
+    pid="${d#/proc/}"
+    isAncestor "$pid" && continue
+    [ -r "$d/cmdline" ] || continue
+    cmd="$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null)"
+    case "$cmd" in
+      *termux-run.sh*) echo "$pid" ;;
     esac
   done
 }
@@ -106,14 +136,18 @@ if [ "$1" = "restart" ]; then
   echo "1/4 останавливаю сторожа…"
   sh "$0" stop >/dev/null 2>&1
 
-  echo "2/4 ищу забытые копии бота…"
+  echo "2/4 ищу забытые копии…"
   FOUND=0
+  for pid in $(straySupervisors); do
+    kill "$pid" 2>/dev/null && FOUND=$((FOUND+1))
+  done
   for pid in $(strays); do
     kill "$pid" 2>/dev/null && FOUND=$((FOUND+1))
   done
   sleep 2
+  for pid in $(straySupervisors); do kill -9 "$pid" 2>/dev/null; done
   for pid in $(strays); do kill -9 "$pid" 2>/dev/null; done
-  [ "$FOUND" -gt 0 ] && echo "    убрано копий: $FOUND" || echo "    забытых копий не было"
+  [ "$FOUND" -gt 0 ] && echo "    убрано процессов: $FOUND" || echo "    забытых копий не было"
 
   echo "3/4 запускаю заново…"
   rm -f "$PIDFILE" "$NODEPID" "$BOTLOCK"
