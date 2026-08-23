@@ -46,9 +46,11 @@ export const forSymbol = (s) =>
 export const get = (id) =>
   db.prepare("SELECT * FROM zones WHERE id=?").get(id);
 export const remove = (id) =>
-  db.prepare("UPDATE zones SET active=0 WHERE id=?").run(id).changes > 0;
+  db.prepare("UPDATE zones SET active=0 WHERE id=? AND active=1").run(id).changes > 0;
+// Условие active=1 обязательно: без него пересчитываются и давно
+// убранные зоны, и счётчик показывает больше, чем убрано на деле.
 export const removeSymbol = (s) =>
-  db.prepare("UPDATE zones SET active=0 WHERE symbol=?").run(s).changes;
+  db.prepare("UPDATE zones SET active=0 WHERE symbol=? AND active=1").run(s).changes;
 
 export function add({ symbol, side, lo, hi, note, source = "manual", armed }) {
   const a = Math.min(lo, hi), b = Math.max(lo, hi);

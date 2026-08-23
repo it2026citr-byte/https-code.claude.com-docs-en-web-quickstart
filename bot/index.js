@@ -1143,7 +1143,8 @@ async function onCallback(q) {
     logEvent({ kind: "note", symbol: sym, text: `убраны все зоны (${n})` });
     await answerCallback(q.id, `Убрано зон: ${n}`);
     await editText(chatId, q.message.message_id,
-      `🗑 <b>${esc(sym)}</b> · убраны все зоны (${n})`);
+      `🗑 <b>${esc(sym)}</b> · убраны все зоны (${n})\n` +
+      (WL.has(sym) ? `<i>Монета осталась в списке — сканирую как прежде.</i>` : ""));
     return;
   }
 
@@ -1169,9 +1170,12 @@ async function onCallback(q) {
     if (!z) { await answerCallback(q.id, "Зона не найдена"); return; }
     if (act0 === "zdel") {
       ZN.remove(id);
+      const left = ZN.forSymbol(z.symbol).length;
       await answerCallback(q.id, "Убрана");
       await editText(chatId, q.message.message_id,
-        `🗑 Зона ${esc(z.symbol)} ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} убрана`);
+        `🗑 Зона ${esc(z.symbol)} ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} убрана\n` +
+        `<i>${WL.has(z.symbol) ? "Монета в списке остаётся" : "Монеты в списке нет"}` +
+        `${left ? `, зон по ней ещё ${left}` : ""}.</i>`);
     } else {
       ZN.rearm(id);
       await answerCallback(q.id, "Сброшено — сработает снова");
@@ -1224,9 +1228,19 @@ async function onCallback(q) {
     if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
     const sym = String(q.data).split(":")[1];
     WL.remove(sym);
-    logEvent({ kind: "note", text: `монета убрана из списка: ${sym}` });
-    await answerCallback(q.id, `${sym} убрана`);
-    await editText(chatId, q.message.message_id, `🗑 <b>${esc(sym)}</b> убрана из списка`);
+    // Убрать монету и оставить сторожить её зоны — значит и дальше
+    // слать по ней сигналы. Зоны уходят вместе с монетой.
+    const zn = ZN.removeSymbol(sym);
+    // Открытую сделку не трогаем: она живёт своей жизнью до стопа
+    // или целей, и её сопровождение от списка монет не зависит.
+    const open = openPositions().filter(p => p.symbol === sym).length;
+    logEvent({ kind: "note", text: `монета убрана из списка: ${sym}` +
+                                   (zn ? `, зон убрано ${zn}` : "") });
+    await answerCallback(q.id, `${sym} убрана${zn ? `, зон: ${zn}` : ""}`);
+    await editText(chatId, q.message.message_id,
+      `🗑 <b>${esc(sym)}</b> убрана из списка` +
+      (zn ? `\n<i>Заодно убрал ${zn} ${zn === 1 ? "зону" : "зон"} по ней.</i>` : "") +
+      (open ? `\n<i>Открытая сделка остаётся — веду её до конца.</i>` : ""));
     return;
   }
 
