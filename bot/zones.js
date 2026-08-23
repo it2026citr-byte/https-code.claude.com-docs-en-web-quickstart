@@ -32,6 +32,11 @@ CREATE TABLE IF NOT EXISTS zones (
 );
 CREATE INDEX IF NOT EXISTS zones_sym ON zones(symbol, active);
 `);
+// Зона, построенная ботом, — кандидат, а не сигнал: проверка показала,
+// что автоматический уровень не лучше случайного. Сигнал даёт только
+// зона, которую человек посмотрел и принял.
+try { db.exec("ALTER TABLE zones ADD COLUMN armed INTEGER NOT NULL DEFAULT 0"); } catch {}
+try { db.exec("UPDATE zones SET armed=1 WHERE source='manual' AND armed=0"); } catch {}
 
 export const all = () =>
   db.prepare("SELECT * FROM zones WHERE active=1 ORDER BY symbol, side, lo").all();
@@ -44,12 +49,17 @@ export const remove = (id) =>
 export const removeSymbol = (s) =>
   db.prepare("UPDATE zones SET active=0 WHERE symbol=?").run(s).changes;
 
-export function add({ symbol, side, lo, hi, note, source = "manual" }) {
+export function add({ symbol, side, lo, hi, note, source = "manual", armed }) {
   const a = Math.min(lo, hi), b = Math.max(lo, hi);
+  const on = armed ?? (source === "manual" ? 1 : 0);
   return Number(db.prepare(
-    "INSERT INTO zones(symbol,side,lo,hi,note,source,created_at) VALUES(?,?,?,?,?,?,?)"
-  ).run(symbol, side, a, b, note ?? null, source, now()).lastInsertRowid);
+    "INSERT INTO zones(symbol,side,lo,hi,note,source,armed,created_at) VALUES(?,?,?,?,?,?,?,?)"
+  ).run(symbol, side, a, b, note ?? null, source, on, now()).lastInsertRowid);
 }
+
+/** Принять предложенную зону: с этого момента она даёт сигнал. */
+export const arm = (id) =>
+  db.prepare("UPDATE zones SET armed=1 WHERE id=?").run(id).changes > 0;
 
 export function edit(id, { lo, hi, note }) {
   const z = get(id);
@@ -147,18 +157,28 @@ function roundLevels(px) {
  * берём совпадение нескольких: уровень, за который голосуют три-четыре
  * признака, встречается у него заметно чаще случайного.
  *
- * Дальше настройки подобраны не по сходству с его зонами, а по деньгам:
- * 56 монет MEXC, семь месяцев часовых свечей, каждая зона доиграна до
- * стопа или целей. Мерилом взято превосходство над случайными уровнями
- * той же геометрии — сама лесенка с безубытком на этом отрезке рынка
- * в плюсе на любых уровнях, и без контроля это выглядело бы победой.
+ * Дальше проверка на деньгах — и она не подтвердила преимущества.
+ * 59 ликвидных пар с фьючерсом, семь месяцев часовых свечей, каждая
+ * зона доиграна до стопа или целей, контроль — случайные уровни той же
+ * геометрии (без него любая настройка кажется прибыльной, потому что
+ * лесенка с безубытком сама по себе в плюсе):
  *
- *   как было (балл 2, отступ 0.5)   +0.095R   превосходство +0.030R
- *   балл 3, отступ 0.2, по тренду   +0.128R   превосходство +0.036R
+ *   балл 3, отступ 0.2, по тренду   +0.039R   случайно +0.042R   −0.003R
+ *   балл 4                          +0.016R   случайно +0.046R   −0.030R
  *
- * Проверено на двух непересекающихся половинах монет: +0.044 и +0.027.
- * Веса признаков перебирались отдельно и на итог не влияют — решает
- * не вес, а сам набор кандидатов.
+ * То есть построенный уровень не отличается от произвольного. Ранняя
+ * версия этой проверки давала +0.036R, но выборка была собрана по
+ * объёму в монетах вместо оборота в долларах и состояла из мемкоинов —
+ * тот результат недействителен.
+ *
+ * Отсюда устройство: бот предлагает кандидатов и караулит цену, но
+ * сигнал даёт только зона, которую человек посмотрел и принял. Отбор
+ * уровня — та часть работы, которая пока не кодируется, и выдавать
+ * автоматический уровень за сигнал значит выдавать шум.
+ *
+ * Настройки (балл 3, отступ 0.2, фильтр структуры) оставлены: они
+ * сокращают поток кандидатов вдвое, не ухудшая результат, а меньше
+ * мусора на проверку — уже польза.
  */
 export const WEIGHTS = { box: 2, swing: 1, vol: 1, round: 1, touch: 0 };
 

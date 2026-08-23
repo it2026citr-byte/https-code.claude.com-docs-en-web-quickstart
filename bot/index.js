@@ -162,6 +162,21 @@ async function zoneTick() {
       continue;
     }
 
+    // Непринятая зона — только пометка. Проверка на истории показала,
+    // что построенный ботом уровень не лучше случайного, поэтому звать
+    // в сделку по нему нельзя. Принятая человеком — другое дело.
+    if (!z.armed) {
+      await broadcast(
+        `🟡 <b>Цена в предложенной зоне</b>\n` +
+        `${esc(z.symbol)} · ${long ? "лонг" : "шорт"} ` +
+        `${fmtPrice(z.lo)}–${fmtPrice(z.hi)} · сейчас ${fmtPrice(ev.price)}\n` +
+        `<i>${esc(z.note ?? "уровень")}</i>\n\n` +
+        `Зону я построил сам, ты её не подтверждал — сигналом не считаю.`,
+        [[{ text: "✅ Принять зону", callback_data: `zok:${z.id}` },
+          { text: "🗑 Убрать", callback_data: `zdel:${z.id}` }]]);
+      continue;
+    }
+
     // Цена вошла в зону — это уже сигнал.
     let a = null;
     try {
@@ -371,9 +386,11 @@ function zonesText(symbol, zones, weak = []) {
   const lines = zones.map(z =>
     `${z.side === "long" ? "🟢" : "🔴"} <b>${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}</b> ` +
     `· ${z.away}% от цены\n   <i>${esc(z.note)}</i>`);
-  return ["", "", `🎯 <b>Зоны — ${zones.length}</b>`, ...lines, "",
-    "<i>Сигнал будет, только когда цена подойдёт к зоне.",
-    `Поправить: <code>/zone ${symbol} long ЦЕНА ЦЕНА</code>, убрать: <code>/zone del НОМЕР</code></i>`,
+  return ["", "", `🎯 <b>Предлагаю зоны — ${zones.length}</b>`, ...lines, "",
+    "<i>Это кандидаты, а не сигналы: на проверке построенный мной уровень",
+    "оказался не лучше случайного, поэтому решаешь ты. Принять — в /zones,",
+    `там же кнопка. Поправить: <code>/zone ${symbol} long ЦЕНА ЦЕНА</code>,`,
+    "убрать: <code>/zone del НОМЕР</code></i>",
   ].join("\n");
 }
 
@@ -685,9 +702,14 @@ async function onMessage(msg) {
         await send(chatId,
           `${z.side === "long" ? "🟢 ЛОНГ" : "🔴 ШОРТ"} <b>${esc(z.symbol)}</b>\n` +
           `${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}\n` +
-          `<i>${esc(z.note ?? "")}${z.source === "auto" ? " · построена ботом" : " · задана вручную"}</i>`,
-          [[{ text: "🗑 Убрать", callback_data: `zdel:${z.id}` },
-            { text: "🔄 Сбросить срабатывание", callback_data: `zarm:${z.id}` }]]);
+          `<i>${esc(z.note ?? "")}${z.source === "auto" ? " · построена ботом" : " · задана вручную"}</i>\n` +
+          (z.armed ? `<b>Принята</b> — даёт сигнал`
+                   : `<b>Не принята</b> — только пометка при входе цены`),
+          z.armed
+            ? [[{ text: "🗑 Убрать", callback_data: `zdel:${z.id}` },
+                { text: "🔄 Сбросить срабатывание", callback_data: `zarm:${z.id}` }]]
+            : [[{ text: "✅ Принять", callback_data: `zok:${z.id}` },
+                { text: "🗑 Убрать", callback_data: `zdel:${z.id}` }]]);
       }
       break;
     }
@@ -839,6 +861,21 @@ async function onCallback(q) {
     const grp = GROUPS[g] ? g : PARAMS[key].g;
     await answerCallback(q.id, `${PARAMS[key].title}: ${fmtVal(key)}`);
     await editText(chatId, q.message.message_id, settingsView(grp), settingsKeyboard(grp));
+    return;
+  }
+
+  if (act0 === "zok") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
+    const id = Number(String(q.data).split(":")[1]);
+    const z = ZN.get(id);
+    if (!z) { await answerCallback(q.id, "Зона не найдена"); return; }
+    ZN.arm(id); ZN.rearm(id);
+    logEvent({ kind: "note", symbol: z.symbol, text: `зона ${z.lo}–${z.hi} принята` });
+    await answerCallback(q.id, "Принята — теперь даёт сигнал");
+    await editText(chatId, q.message.message_id,
+      `✅ <b>Зона принята</b> · ${esc(z.symbol)} ${z.side === "long" ? "лонг" : "шорт"}\n` +
+      `${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}\n` +
+      `<i>Теперь вход в неё даёт полноценный сигнал.</i>`);
     return;
   }
 
