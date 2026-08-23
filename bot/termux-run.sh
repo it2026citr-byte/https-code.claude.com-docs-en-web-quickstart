@@ -20,8 +20,26 @@ MAXLOG=2000000          # 2 МБ, дальше обрезаем
 
 mkdir -p "$STORAGE"
 
+# Проверяем не только «жив ли номер», но и что это ИМЕННО наш сторож.
+# После перезагрузки номера процессов начинают выдаваться заново, и в
+# старом pid-файле может оказаться номер чужого живого процесса — тогда
+# сторож решал, что бот уже работает, и молча не запускался.
 alive() {
-  [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
+  [ -f "$PIDFILE" ] || return 1
+  pid="$(cat "$PIDFILE" 2>/dev/null)"
+  [ -n "$pid" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  cmd="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+  case "$cmd" in *termux-run.sh*) return 0 ;; *) rm -f "$PIDFILE"; return 1 ;; esac
+}
+
+nodeAlive() {
+  [ -f "$NODEPID" ] || return 1
+  npid="$(cat "$NODEPID" 2>/dev/null)"
+  [ -n "$npid" ] || return 1
+  kill -0 "$npid" 2>/dev/null || return 1
+  ncmd="$(tr '\0' ' ' < "/proc/$npid/cmdline" 2>/dev/null)"
+  case "$ncmd" in *start.js*|*index.js*) return 0 ;; *) return 1 ;; esac
 }
 
 # Ищем забытые копии бота напрямую в /proc — без ps и pkill,
@@ -60,6 +78,25 @@ if [ "$1" = "stop" ]; then
   exit 0
 fi
 
+if [ "$1" = "doctor" ]; then
+  echo "═══ проверка бота ═══"
+  echo
+  printf "Node.js:        "; node -v 2>/dev/null || echo "НЕ УСТАНОВЛЕН"
+  printf "папка бота:     "; [ -f "$DIR/index.js" ] && echo "на месте" || echo "НЕТ ФАЙЛОВ"
+  printf "токен .env:     "; [ -s "$DIR/.env" ] && echo "есть" || echo "НЕТ — бот не запустится"
+  printf "стратегий:      "; ls "$DIR/strategies"/*.js 2>/dev/null | grep -vc index.js
+  printf "состояние:      "; sh "$0" status
+  echo
+  printf "интернет:       "
+  if node -e "fetch('https://api.mexc.com/api/v3/ping').then(r=>{console.log(r.ok?'MEXC отвечает':'MEXC ошибка '+r.status)}).catch(e=>console.log('НЕТ СВЯЗИ: '+e.message))" 2>/dev/null; then :; else echo "проверить не удалось"; fi
+  echo
+  echo "последние строки лога:"
+  tail -n 8 "$LOG" 2>/dev/null | sed 's/^/    /' || echo "    лога ещё нет"
+  echo
+  echo "если бот не работает — выполни:  sh $0 restart"
+  exit 0
+fi
+
 if [ "$1" = "restart" ]; then
   echo "1/4 останавливаю сторожа…"
   sh "$0" stop >/dev/null 2>&1
@@ -94,9 +131,8 @@ fi
 if [ "$1" = "status" ]; then
   if alive; then
     echo "сторож работает, PID $(cat "$PIDFILE")"
-    [ -f "$NODEPID" ] && kill -0 "$(cat "$NODEPID")" 2>/dev/null \
-      && echo "бот работает,   PID $(cat "$NODEPID")" \
-      || echo "бот сейчас перезапускается"
+    nodeAlive && echo "бот работает,   PID $(cat "$NODEPID")" \
+              || echo "бот сейчас перезапускается"
   else
     echo "не работает"
   fi
