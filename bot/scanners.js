@@ -2,6 +2,7 @@ import { log } from "./config.js";
 import { candles } from "./candles.js";
 import { atr } from "./indicators.js";
 import { rejectReason } from "./data/tradable.js";
+import { num } from "./runtime.js";
 
 /**
  * Сканер «отстающих»: график с задержкой развития.
@@ -79,8 +80,24 @@ const pct = (c, from, to) =>
  * Свечи берутся из общего кеша, поэтому второй и следующие проходы
  * тянут с биржи только хвост.
  */
+/**
+ * Пороги читаются на каждом проходе, а не при загрузке: правка из
+ * Telegram применяется со следующего скана, перезапускать нечего.
+ */
+function fromSettings() {
+  const lag = Math.max(1, Math.round(num("ll_lag") / 15));   // минуты → бары
+  return {
+    pumpPct: num("ll_pump"),
+    minCorr: num("ll_corr") / 100,
+    maxLag: lag,
+    quietShare: num("ll_quiet") / 100,
+  };
+}
+
 export async function leadLag(symbols, opts = {}) {
-  const P = { ...DEFAULTS, ...opts };
+  let live = {};
+  try { live = fromSettings(); } catch { /* до первого запуска берём умолчания */ }
+  const P = { ...DEFAULTS, ...live, ...opts };
   const pairs = symbols.filter(s => !rejectReason(s)).slice(0, P.maxPairs);
   if (pairs.length < 8) return [];
 
