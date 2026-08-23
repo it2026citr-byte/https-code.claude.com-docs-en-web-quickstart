@@ -580,7 +580,13 @@ async function statusText(withHealth = true) {
     `<b>Вселенная:</b> ${uni} пар · порог ${fmtVal("min_turn_k")}` +
       ` <i>(в пересчёте на прошедшую часть суток ${fmtUsd(num("min_turn_k") * 1000 *
         Math.max(0.02, (Date.now() % 86_400_000) / 86_400_000))} $)</i>`,
+    // Сканер отстающих сигналы даёт, но стратегией не является —
+    // в списке его не было, и выходило, что сигнал пришёл ниоткуда.
     `<b>Стратегий:</b> ${STRATEGIES.length ? STRATEGIES.map(s => s.id).join(", ") : "нет"}`,
+    `<b>Сканер отстающих:</b> ${num("leadlag_on") === 1
+      ? `ищет · скачок от ${num("ll_pump")}%, совпадение от ${num("ll_corr")}%, ` +
+        `сдвиг до ${num("ll_lag") >= 60 ? num("ll_lag") / 60 + " ч" : num("ll_lag") + " мин"}`
+      : "выключен"}`,
     `<b>Открытых сделок:</b> ${pos.length}`,
     `<b>Работаю без перерыва:</b> ${fmtAgo(now() - STARTED)}`,
     `<b>Версия кода:</b> ${VER.hash} от ${VER.date}`,
@@ -1088,9 +1094,16 @@ async function onMessage(msg) {
     case "/del": case "/убрать": {
       const sym = WL.normalize(text.split(/\s+/)[1]);
       if (!sym) { await send(chatId, "Так: <code>/del ZECUSDT</code>"); break; }
-      await send(chatId, WL.remove(sym)
-        ? `🗑 <b>${esc(sym)}</b> убрана из списка.`
-        : `<b>${esc(sym)}</b> в списке не было.`);
+      if (!WL.remove(sym)) { await send(chatId, `<b>${esc(sym)}</b> в списке не было.`); break; }
+      // Ровно то же, что делает кнопка в /coins: зоны уходят с монетой,
+      // открытая сделка остаётся.
+      const zn = ZN.removeSymbol(sym);
+      const open = openPositions().filter(p => p.symbol === sym).length;
+      logEvent({ kind: "note", text: `монета убрана из списка: ${sym}` +
+                                     (zn ? `, зон убрано ${zn}` : "") });
+      await send(chatId, `🗑 <b>${esc(sym)}</b> убрана из списка.` +
+        (zn ? `\n<i>Заодно убрал ${zn} ${zn === 1 ? "зону" : "зон"} по ней.</i>` : "") +
+        (open ? `\n<i>Открытая сделка остаётся — веду её до конца.</i>` : ""));
       break;
     }
 
