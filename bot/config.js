@@ -1,4 +1,6 @@
 import { readFileSync, existsSync, mkdirSync } from "node:fs";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,6 +53,23 @@ export const cfg = {
 if (!cfg.token) {
   console.error("Нет TELEGRAM_TOKEN. Скопируй .env.example в .env и заполни.");
   process.exit(1);
+}
+
+/**
+ * Версия кода — короткий хеш коммита и его дата. Нужна, чтобы отличать
+ * «обновил файлы» от «перезапустил процесс»: git pull меняет файлы,
+ * но работающий Node держит в памяти старый код.
+ */
+export function codeVersion() {
+  try {
+    const { execFileSync } = require("node:child_process");
+    const run = (args) => execFileSync("git", ["-C", ROOT, ...args],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    return { hash: run(["rev-parse", "--short", "HEAD"]),
+             date: run(["log", "-1", "--format=%cd", "--date=format:%d.%m %H:%M"]) };
+  } catch {
+    return { hash: "?", date: "версия не определена" };
+  }
 }
 
 export const log = (...a) => {

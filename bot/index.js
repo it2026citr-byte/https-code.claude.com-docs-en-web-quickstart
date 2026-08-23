@@ -1,4 +1,4 @@
-import { cfg, log } from "./config.js";
+import { cfg, log, codeVersion } from "./config.js";
 import {
   db, now, getSetting, setSetting, upsertUser, openPositions,
   getUser, setRole, listUsers, getMode, setMode, MODE_SCAN, MODE_FOCUS,
@@ -23,6 +23,7 @@ import {
 } from "./journal.js";
 
 const STARTED = now();
+const VER = codeVersion();
 let STRATEGIES = [];
 
 const TAKE_KB = (id) => [[
@@ -216,6 +217,7 @@ async function statusText(withHealth = true) {
     `<b>Стратегий:</b> ${STRATEGIES.length ? STRATEGIES.map(s => s.id).join(", ") : "нет"}`,
     `<b>Открытых сделок:</b> ${pos.length}`,
     `<b>Работаю без перерыва:</b> ${fmtAgo(now() - STARTED)}`,
+    `<b>Версия кода:</b> ${VER.hash} от ${VER.date}`,
     `<b>Скан:</b> ${fmtVal("scan_min")} · <b>пульс:</b> ${fmtVal("pulse_min")}`,
   ];
   if (pos.length) {
@@ -637,6 +639,8 @@ async function onCallback(q) {
 
 // --- запуск -----------------------------------------------------------------
 async function main() {
+  // Версию печатаем до всякой сети: если связи нет, знать её важнее всего.
+  log(`версия кода ${VER.hash} от ${VER.date}`);
   const me = await api("getMe");
   const o = ownerId();
   log(`бот @${me.username} на связи · админ: ${o ?? "будет закреплён первым /start"}`);

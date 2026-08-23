@@ -81,6 +81,7 @@ fi
 if [ "$1" = "doctor" ]; then
   echo "═══ проверка бота ═══"
   echo
+  printf "версия файлов:  "; git -C "$DIR" log -1 --format="%h от %cd" --date=format:"%d.%m %H:%M" 2>/dev/null || echo "не определить"
   printf "Node.js:        "; node -v 2>/dev/null || echo "НЕ УСТАНОВЛЕН"
   printf "папка бота:     "; [ -f "$DIR/index.js" ] && echo "на месте" || echo "НЕТ ФАЙЛОВ"
   printf "токен .env:     "; [ -s "$DIR/.env" ] && echo "есть" || echo "НЕТ — бот не запустится"
