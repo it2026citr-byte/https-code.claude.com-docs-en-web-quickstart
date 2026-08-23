@@ -8,7 +8,7 @@ import { api, send, sendLong, sendDoc, broadcast, broadcastDoc, editText,
          answerCallback, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
 import { prices, lastPrice, deepHistory } from "./data/mexc.js";
-import { monitorTick, closePosition, rAt } from "./monitor.js";
+import { monitorTick, closePosition, rAt, alertOnce } from "./monitor.js";
 import { candles } from "./candles.js";
 import { atr } from "./indicators.js";
 import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
@@ -50,14 +50,69 @@ async function onSignal(sig) {
   log(`сигнал #${sig.id}: ${sig.side} ${sig.symbol} @ ${sig.entry}`);
 }
 
+/**
+ * Повторный сигнал по монете, которая уже в работе.
+ *
+ * Прислать его как обычную карточку — значит позвать перезайти в то,
+ * где ты уже стоишь. Поэтому вместо приглашения идёт правка к открытой
+ * сделке: подтверждение с новым стопом или предупреждение о развороте.
+ * Одно сообщение на бар — ключ гашения содержит время бара.
+ */
+const rTxt = (r) => `${r > 0 ? "+" : ""}${r.toFixed(2)}R`;
+
+async function onUpdate(f, pos) {
+  const same = f.side === pos.side;
+  const key = `${same ? "confirm" : "against"}@${f.strategy}@${f.barTime}`;
+  if (!alertOnce(pos.id, "info", key, "")) return false;
+
+  const long = pos.side === "long";
+  const px = await lastPrice(pos.symbol).catch(() => null) ?? f.entry;
+  const head =
+    `<b>${esc(pos.symbol)}</b> ${long ? "LONG" : "SHORT"} · в работе ${fmtAgo(now() - pos.opened_at)}\n` +
+    `Вход ${fmtPrice(pos.entry)} · стоп ${fmtPrice(pos.sl_current)} · ` +
+    `целей взято ${pos.tp_hit}/5 · сейчас <b>${rTxt(rAt(pos, px))}</b>`;
+
+  if (!same) {
+    logEvent({ kind: "note", symbol: pos.symbol,
+               text: `встречный сигнал ${f.strategy} против открытой сделки` });
+    await broadcast(
+      `⚠️ <b>Встречный сигнал</b> · ${esc(f.strategy)}\n${head}\n\n` +
+      `Стратегия развернулась и даёт вход в другую сторону.\n` +
+      `<i>${esc(f.reason)}</i>\n\n` +
+      `Перезаходить не нужно — это повод решить по открытой сделке.`,
+      [[{ text: "🚪 Закрыть сейчас", callback_data: `close:${pos.id}` },
+        { text: "🤝 Держу", callback_data: "noop" }]]);
+    return true;
+  }
+
+  // Стоп двигаем только к цене: это уменьшает риск. Уводить его дальше
+  // ради «запаса» — как раз то, чем сливают.
+  const better = long ? f.sl > pos.sl_current : f.sl < pos.sl_current;
+  const safe = long ? f.sl < px : f.sl > px;
+  const kb = better && safe
+    ? [[{ text: `🛡 Стоп → ${fmtPrice(f.sl)}`, callback_data: `tsl:${pos.id}:${f.sl}` },
+        { text: "🤝 Оставить", callback_data: "noop" }]]
+    : null;
+
+  await broadcast(
+    `🔄 <b>Сигнал повторился</b> · ${esc(f.strategy)}\n${head}\n\n` +
+    `Стратегия снова даёт вход: ${fmtPrice(f.entry)}, стоп ${fmtPrice(f.sl)}.\n` +
+    `<i>${esc(f.reason)}</i>\n\n` +
+    (better && safe
+      ? `Стоп можно подтянуть — риск станет меньше на ` +
+        `${(Math.abs(f.sl - pos.sl_current) / Math.abs(pos.entry - pos.sl) * 100).toFixed(0)}% от исходного.`
+      : `Стоп трогать незачем, текущий лучше. Просто подтверждение.`) +
+    `\n<b>Перезаходить не нужно.</b>`, kb);
+  return true;
+}
+
 async function scanTick() {
   const t0 = Date.now();
-  const r = await scanMarket(STRATEGIES, onSignal);
+  const r = await scanMarket(STRATEGIES, onSignal, onUpdate);
   setSetting("last_market_seen", now());
   setSetting("universe_size", r.pairs);
   log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, выдано ${r.signals}, ` +
-      `${((Date.now() - t0) / 1000).toFixed(1)}с`);
-
+      `правок по открытым ${r.updates ?? 0}, ${((Date.now() - t0) / 1000).toFixed(1)}с`);
 }
 
 /** Пульс: короткая сводка по рынку, живёт своим интервалом. */
@@ -85,6 +140,25 @@ async function zoneTick() {
         `${fmtPrice(z.lo)}–${fmtPrice(z.hi)}\n` +
         `Сейчас ${fmtPrice(ev.price)} · до границы ${ev.distPct.toFixed(2)}%\n` +
         `<i>${esc(z.note ?? "")}</i>`);
+      continue;
+    }
+
+    // Монета уже в работе — зона не должна звать зайти второй раз.
+    const held = db.prepare(
+      "SELECT * FROM positions WHERE symbol=? AND status='open'").get(z.symbol);
+    if (held) {
+      if (alertOnce(held.id, "info", `zone@${z.id}`, "")) {
+        const long = held.side === "long";
+        const px = await lastPrice(z.symbol).catch(() => null) ?? ev.price;
+        await broadcast(
+          `🎯 <b>Цена в зоне</b> ${fmtPrice(z.lo)}–${fmtPrice(z.hi)}\n` +
+          `<b>${esc(z.symbol)}</b> ${long ? "LONG" : "SHORT"} · уже в работе · ` +
+          `сейчас <b>${rTxt(rAt(held, px))}</b>\n` +
+          `<i>${esc(z.note ?? "уровень")}</i>\n\n` +
+          (z.side === held.side
+            ? `Зона за тебя — уровень под сделкой. Перезаходить не нужно.`
+            : `Зона против сделки: здесь цену обычно разворачивает.`));
+      }
       continue;
     }
 
@@ -784,6 +858,45 @@ async function onCallback(q) {
       await editText(chatId, q.message.message_id,
         `🔄 ${esc(z.symbol)} ${fmtPrice(z.lo)}–${fmtPrice(z.hi)} · <i>сработает заново</i>`);
     }
+    return;
+  }
+
+  // Перенос стопа по повторному сигналу — только к цене, только вниз по риску.
+  if (act0 === "tsl" || act0 === "close") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
+    const [, rawId, rawSl] = String(q.data).split(":");
+    const p = db.prepare("SELECT * FROM positions WHERE id=? AND status='open'").get(Number(rawId));
+    if (!p) { await answerCallback(q.id, "Сделка уже закрыта"); return; }
+    const long = p.side === "long";
+
+    if (act0 === "close") {
+      const px = await lastPrice(p.symbol).catch(() => null);
+      if (px == null) { await answerCallback(q.id, "Цена недоступна, попробуй ещё раз"); return; }
+      const r = closePosition(p, px, "manual");
+      await answerCallback(q.id, `Закрыто ${rTxt(r)}`);
+      await editText(chatId, q.message.message_id,
+        `🚪 <b>Закрыто вручную</b> · ${esc(p.symbol)} ${long ? "LONG" : "SHORT"}\n` +
+        `Цена ${fmtPrice(px)} · итог <b>${rTxt(r)}</b>`);
+      return;
+    }
+
+    const sl = Number(rawSl);
+    const px = await lastPrice(p.symbol).catch(() => null);
+    if (!isFinite(sl) || sl <= 0) { await answerCallback(q.id, "Стоп не разобрал"); return; }
+    if (!(long ? sl > p.sl_current : sl < p.sl_current)) {
+      await answerCallback(q.id, "Текущий стоп уже лучше"); return;
+    }
+    if (px != null && (long ? sl >= px : sl <= px)) {
+      await answerCallback(q.id, "Цена ушла, стоп оказался бы за ней"); return;
+    }
+    db.prepare("UPDATE positions SET sl_current=?, be_armed=1 WHERE id=?").run(sl, p.id);
+    logEvent({ kind: "note", symbol: p.symbol, side: p.side, price: sl,
+               text: `стоп подтянут вручную с ${p.sl_current} до ${sl}` });
+    await answerCallback(q.id, `Стоп ${fmtPrice(sl)}`);
+    await editText(chatId, q.message.message_id,
+      `🛡 <b>Стоп подтянут</b> · ${esc(p.symbol)} ${long ? "LONG" : "SHORT"}\n` +
+      `${fmtPrice(p.sl_current)} → <b>${fmtPrice(sl)}</b>\n` +
+      `<i>Риск уменьшен, перезаходить не потребовалось.</i>`);
     return;
   }
 

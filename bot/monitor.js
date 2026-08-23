@@ -14,6 +14,9 @@ const insAlert = db.prepare(
 const once = (posId, level, reason, text) =>
   insAlert.run(posId, level, reason, text ?? "", now()).changes > 0;
 
+/** То же гашение повторов — для сообщений вне монитора. */
+export const alertOnce = once;
+
 export const stopDist = (p) => Math.abs(p.entry - p.sl);
 
 /**

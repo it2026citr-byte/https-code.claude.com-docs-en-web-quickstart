@@ -1,4 +1,4 @@
-import { db, now } from "./db.js";
+import { db, now, openPositions } from "./db.js";
 import { cfg, log } from "./config.js";
 import { topPairs } from "./data/tradingview.js";
 import { fetchKlines, TF_SEC } from "./data/mexc.js";
@@ -56,7 +56,7 @@ async function volatility(symbol) {
  * Один проход по рынку. Стратегии считаются на последнем ЗАКРЫТОМ баре —
  * текущий ещё формируется, по нему решения не принимаются.
  */
-export async function scanMarket(strategies, onSignal) {
+export async function scanMarket(strategies, onSignal, onUpdate) {
   if (!strategies.length) return { pairs: 0, signals: 0 };
 
   // Монеты из моего списка сканируются всегда, независимо от оборота.
@@ -129,8 +129,18 @@ export async function scanMarket(strategies, onSignal) {
   // Свежие — вперёд; при потоке сигналов важнее те, где стоп ближе.
   found.sort((a, b) => Math.abs(a.sl - a.entry) / a.entry - Math.abs(b.sl - b.entry) / b.entry);
 
-  let sent = 0;
+  // Монета, уже взятая в работу, не должна звать зайти второй раз.
+  // Повторный сигнал по ней — это уточнение к открытой сделке, а не
+  // приглашение перезайти, и уходит он другой дорогой.
+  const open = new Map(openPositions().map(p => [p.symbol, p]));
+
+  let sent = 0, updated = 0;
   for (const f of found) {
+    const held = open.get(f.symbol);
+    if (held) {
+      if (onUpdate && await onUpdate(f, held)) updated++;
+      continue;
+    }
     if (cfg.maxSignalsPerScan && sent >= cfg.maxSignalsPerScan) break;
     const vol = await volatility(f.symbol);
     const r = insertSignal.run(f.strategy, f.symbol, f.side, f.tf, f.entry, f.sl,
@@ -146,7 +156,7 @@ export async function scanMarket(strategies, onSignal) {
     sent++;
   }
 
-  return { pairs: pairs.length, candidates: found.length, signals: sent };
+  return { pairs: pairs.length, candidates: found.length, signals: sent, updates: updated };
 }
 
 /** Индикаторы по одной паре — для монитора позиций. */
