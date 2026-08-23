@@ -72,6 +72,10 @@ export async function topPairs(limit = null) {
       { left: "name", operation: "match", right: "USDT$" },
     ],
     columns: ["name", "close", "volume", "change"],
+    // Сортировка идёт по объёму В МОНЕТАХ — иначе никак, колонки оборота
+    // в долларах у TradingView нет. Поэтому берём с запасом и отбираем
+    // ниже по volUsd. Брать этот список как есть нельзя: у монеты по
+    // 1e-11 штук триллионы, и весь верх занимают мемкоины.
     sort: { sortBy: "volume", sortOrder: "desc" },
     range: [0, 2000],
   });
