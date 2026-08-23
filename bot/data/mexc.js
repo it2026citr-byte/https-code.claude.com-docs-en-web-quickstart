@@ -1,4 +1,3 @@
-import { db } from "../db.js";
 import { cfg, log } from "../config.js";
 
 const BASE = "https://api.mexc.com/api/v3";
@@ -8,13 +7,7 @@ const BASE = "https://api.mexc.com/api/v3";
 const TF_MAP = { "1m":"1m", "5m":"5m", "15m":"15m", "30m":"30m", "1h":"60m", "4h":"4h", "1d":"1d" };
 export const TF_SEC = { "1m":60, "5m":300, "15m":900, "30m":1800, "1h":3600, "4h":14400, "1d":86400 };
 
-const ins = db.prepare(
-  "INSERT INTO candles(symbol,tf,open_time,o,h,l,c,v) VALUES(?,?,?,?,?,?,?,?) " +
-  "ON CONFLICT(symbol,tf,open_time) DO UPDATE SET " +
-  "h=excluded.h, l=excluded.l, c=excluded.c, v=excluded.v"
-);
-
-/** Свечи с биржи + запись в кеш. Возвращает массив от старых к новым. */
+/** Свечи с биржи. Возвращает массив от старых к новым. */
 export async function fetchKlines(symbol, tf, limit = 300) {
   const iv = TF_MAP[tf];
   if (!iv) throw new Error(`неизвестный таймфрейм ${tf}`);
@@ -28,15 +21,6 @@ export async function fetchKlines(symbol, tf, limit = 300) {
     t: Math.floor(k[0] / 1000),
     o: +k[1], h: +k[2], l: +k[3], c: +k[4], v: +k[5],
   }));
-  const tx = db.prepare("BEGIN"); // ручная транзакция — заметно быстрее
-  try {
-    tx.run();
-    for (const c of out) ins.run(symbol, tf, c.t, c.o, c.h, c.l, c.c, c.v);
-    db.prepare("COMMIT").run();
-  } catch (e) {
-    db.prepare("ROLLBACK").run();
-    log("кеш свечей не записан:", e.message);
-  }
   return out;
 }
 

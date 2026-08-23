@@ -186,11 +186,4 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
            updates: updated, watching };
 }
 
-/** Индикаторы по одной паре — для монитора позиций. */
-export async function contextFor(strategy, symbol) {
-  const c = await fetchKlines(symbol, strategy.timeframe, 300);
-  if (c.length < 160) return null;
-  return { c, x: strategy.prepare(c, symbol), i: c.length - 2 };
-}
-
 export { TF_SEC };

@@ -185,11 +185,13 @@ async function zoneTick() {
   // Порог подхода — доля среднедневного размаха монеты, а не общий
   // процент: иначе резвую монету бот заливает сообщениями, а по
   // спокойной опаздывает.
+  // Считаем по всем монетам разом: по очереди это столько ожиданий
+  // сети, сколько монет, и первый такт после запуска растягивается.
   const vol = {};
-  for (const s of syms) {
-    const v = await dailyVol(s);
+  await Promise.all(syms.map(async (s) => {
+    const v = await dailyVol(s).catch(() => null);
     if (v) vol[s] = v;
-  }
+  }));
   const far = num("zone_far_share") / 100, near = num("zone_near_share") / 100;
 
   await checkTradable("BTCUSDT").catch(() => null);
@@ -232,17 +234,17 @@ async function zoneTick() {
       lines.join("\n"));
   }
 
+  const openBySymbol = new Map(openPositions().map(p => [p.symbol, p]));
   for (const ev of events) {
     if (ev.kind !== "enter") continue;
     const z = ev.zone;
     const long = z.side === "long";
     // Монета уже в работе — зона не должна звать зайти второй раз.
-    const held = db.prepare(
-      "SELECT * FROM positions WHERE symbol=? AND status='open'").get(z.symbol);
+    const held = openBySymbol.get(z.symbol);
     if (held) {
       if (alertOnce(held.id, "info", `zone@${z.id}`, "")) {
         const long = held.side === "long";
-        const px = await lastPrice(z.symbol).catch(() => null) ?? ev.price;
+        const px = ev.price;          // цену уже взяли одним запросом выше
         await broadcast(
           `🎯 <b>Цена в зоне</b> ${fmtPrice(z.lo)}–${fmtPrice(z.hi)}\n` +
           `<b>${esc(z.symbol)}</b> ${long ? "LONG" : "SHORT"} · уже в работе · ` +
@@ -935,9 +937,11 @@ async function onMessage(msg) {
         `по ${byCoin.size} монет${byCoin.size === 1 ? "е" : "ам"}\n` +
         `<i>Слежу за ценой и сигналю при подходе и входе в зону.</i>`);
 
+      // Цены — одним запросом на все монеты: по одной это столько
+      // обращений к бирже, сколько монет в списке.
+      const allPx = await prices([...byCoin.keys()]).catch(() => ({}));
       for (const [sym, zs] of byCoin) {
-        let px = null;
-        try { px = await lastPrice(sym); } catch { /* обойдёмся без цены */ }
+        const px = allPx[sym] ?? null;
         const lines = zs.map(z => {
           const away = px ? Math.abs((z.side === "long" ? px - z.hi : z.lo - px)) / px * 100 : null;
           return `${z.side === "long" ? "🟢" : "🔴"} <b>${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}</b>` +

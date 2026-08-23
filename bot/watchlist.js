@@ -81,8 +81,35 @@ function simulate(c, i, long, entry, dist, hold, beAt) {
 const BARS_PER_DAY = { "5m": 288, "15m": 96, "1h": 24, "4h": 6, "1d": 1 };
 
 /** Сколько дней монета вообще торгуется. */
+/**
+ * Общий кеш глубокой истории на время разбора монеты.
+ *
+ * Разбор и подгонка параметров просят одни и те же свечи: сперва
+ * analyze по каждому таймфрейму, затем candlesFor по каждой стратегии.
+ * Без кеша полугодовая история качалась заново пять раз подряд —
+ * четыре с половиной десятка запросов вместо девяти, и добавление
+ * монеты растягивалось на минуту.
+ *
+ * Живёт десять минут: этого хватает на весь разбор, а держать в памяти
+ * тысячи свечей дольше незачем.
+ */
+const deepCache = new Map();          // "SYMBOL|tf|want" → { at, arr }
+const DEEP_TTL = 10 * 60_000;
+
+async function deepCached(symbol, tf, want) {
+  const key = `${symbol}|${tf}|${want}`;
+  const hit = deepCache.get(key);
+  if (hit && Date.now() - hit.at < DEEP_TTL) return hit.arr;
+  const arr = await deepHistory(symbol, tf, want);
+  deepCache.set(key, { at: Date.now(), arr });
+  // Заодно выбрасываем протухшее, чтобы карта не росла.
+  for (const [k, v] of deepCache)
+    if (Date.now() - v.at > DEEP_TTL) deepCache.delete(k);
+  return arr;
+}
+
 export async function ageDays(symbol) {
-  const d = await deepHistory(symbol, "1d", 400).catch(() => []);
+  const d = await deepCached(symbol, "1d", 400).catch(() => []);
   if (d.length < 2) return 0;
   return Math.round((d.at(-1).t - d[0].t) / 86400);
 }
@@ -120,7 +147,7 @@ export async function analyze(symbol, strategies, months = 6) {
 
     if (!byTf.has(tf)) {
       const want = Math.min(9000, Math.round(months * 30 * BARS_PER_DAY[tf]) + 300);
-      byTf.set(tf, await deepHistory(symbol, tf, want).catch(() => []));
+      byTf.set(tf, await deepCached(symbol, tf, want).catch(() => []));
     }
     const c = byTf.get(tf);
     // Бывает, что пара торгуется, а свечей биржа не отдаёт — например
@@ -157,7 +184,7 @@ export async function candlesFor(symbol, strategy, months = 6) {
   const age = await ageDays(symbol);
   const tf = age >= 90 ? strategy.timeframe : pickTf(strategy.timeframe, age);
   const want = Math.min(9000, Math.round(months * 30 * BARS_PER_DAY[tf]) + 300);
-  const c = await deepHistory(symbol, tf, want);
+  const c = await deepCached(symbol, tf, want);
   return c.length >= strategy.warmup + 400 ? c : null;
 }
 

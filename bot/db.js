@@ -1,5 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
-import { cfg } from "./config.js";
+import { cfg, log } from "./config.js";
 
 export const db = new DatabaseSync(cfg.dbPath);
 
@@ -86,16 +86,23 @@ CREATE TABLE IF NOT EXISTS journal (
 );
 CREATE INDEX IF NOT EXISTS journal_month ON journal(month, ts);
 CREATE INDEX IF NOT EXISTS journal_ts ON journal(ts);
-
--- Кеш свечей, чтобы не дёргать биржу лишний раз.
-CREATE TABLE IF NOT EXISTS candles (
-  symbol    TEXT NOT NULL,
-  tf        TEXT NOT NULL,
-  open_time INTEGER NOT NULL,
-  o REAL, h REAL, l REAL, c REAL, v REAL,
-  PRIMARY KEY (symbol, tf, open_time)
-);
 `);
+
+// Свечи когда-то складывались в базу, но читать их оттуда так и не
+// понадобилось: рабочий кеш живёт в памяти. Запись шла на каждый скан —
+// под сорок тысяч строк в сутки и около двух мегабайт роста файла в
+// день, всё это на флеш-память телефона и впустую. Таблицу убираем,
+// место возвращаем — разово, при первом запуске новой версии.
+try {
+  const has = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='candles'").get();
+  if (has) {
+    const n = db.prepare("SELECT COUNT(*) c FROM candles").get().c;
+    db.exec("DROP TABLE candles");
+    db.exec("VACUUM");
+    log(`убрана неиспользуемая таблица свечей: ${n} строк, место возвращено`);
+  }
+} catch (e) { log("таблицу свечей убрать не вышло:", e.message); }
 
 // Миграция: у ранних баз нет колонок доступа.
 {
@@ -145,12 +152,6 @@ export function getSetting(key, fallback = null) {
 export function setSetting(key, value) {
   _set.run(key, String(value));
 }
-export function getJSON(key, fallback) {
-  const v = getSetting(key);
-  if (v === null) return fallback;
-  try { return JSON.parse(v); } catch { return fallback; }
-}
-export function setJSON(key, value) { setSetting(key, JSON.stringify(value)); }
 
 export const now = () => Math.floor(Date.now() / 1000);
 
