@@ -4,6 +4,10 @@ MCP-сервер, который подключает Claude к рыночным
 
 An MCP server that connects Claude to TradingView market data via TradingView's public endpoints. No API key required.
 
+> **Раздел «[ИИ и боты](ИИ-и-боты/)»** — торговый бот, стратегии для
+> TradingView, сканер MEXC и накопленные знания по разбору сигнальной системы.
+> Оглавление: [`ИИ-и-боты/README.md`](ИИ-и-боты/README.md).
+
 ## Инструменты / Tools
 
 | Инструмент | Что делает |

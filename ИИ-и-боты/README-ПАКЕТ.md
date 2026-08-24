@@ -1,6 +1,8 @@
 # Пакет: TradingView + разбор Crypto Signals Golden
 
-Собрано в сессии Claude Code, 22 августа 2026.
+Собрано в сессии Claude Code, 22 августа 2026. Историческая опись: описывает
+состояние на тот день. Что появилось позже (телеграм-бот, funding-стратегия,
+сканер отстающих) — в `README.md` раздела и в `../bot/`.
 
 ## 1. Стратегии для TradingView (папка strategies/)
 
@@ -17,7 +19,7 @@
 **universal-strategy.pine** — более ранняя сборка из четырёх индикаторов:
 UT Bot (QuantNomad) + CCI + Squeeze Momentum (LazyBear) + Smart Money Concepts.
 
-## 2. База сигналов (папка signals/)
+## 2. База сигналов (папка ../signals/)
 
 **golden-signals-all.csv** — 415 сигналов, 44 пары, 8 июля — 22 августа.
 Колонки: Closed, Type, Pair, Status, Target_Reached, Entry_price, Stop_Loss, Batch.
@@ -45,13 +47,13 @@ golden-signals-v2..v7.csv — исходные партии по видео.
 Не разгадано: точное правило ВХОДА. Нужны времена ОТКРЫТИЯ сигналов
 (история push-уведомлений), в приложении видно только время закрытия.
 
-## 4. MCP-сервер TradingView (папки src/, файлы package.json, tsconfig.json)
+## 4. MCP-сервер TradingView (папки ../src/, файлы ../package.json, ../tsconfig.json)
 
 Подключает Claude к данным TradingView: поиск тикеров, котировки,
 теханализ по таймфреймам, скринер рынков. Сборка: npm install && npm run build.
 Подключение: claude mcp add tradingview -- node <путь>/dist/index.js
 
-## 5. Крипто-сканер (signals/generate.mjs, dashboard.html)
+## 5. Крипто-сканер (../signals/generate.mjs, dashboard.html)
 
 Сканер топ-30 пар Binance по алгоритму стратегии на 15м/1ч/4ч/1д.
-Запуск: node signals/generate.mjs → пересобирает dashboard.html
+Запуск: node ../signals/generate.mjs → пересобирает dashboard.html
