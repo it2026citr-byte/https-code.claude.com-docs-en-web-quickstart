@@ -2,7 +2,7 @@ import { db, now, openPositions } from "./db.js";
 import { cfg, log } from "./config.js";
 import { topPairs } from "./data/tradingview.js";
 import { fetchKlines, TF_SEC } from "./data/mexc.js";
-import { candles } from "./candles.js";
+import { candles, mapLimit } from "./candles.js";
 import { dailyVolatility } from "./indicators.js";
 import { logEvent } from "./journal.js";
 import { num } from "./runtime.js";
@@ -11,18 +11,6 @@ import { refresh as refreshFunding } from "./data/funding.js";
 import { rejectReason } from "./data/tradable.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
-async function mapLimit(items, n, fn) {
-  const it = items[Symbol.iterator]();
-  const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
-    for (;;) {
-      const { value, done } = it.next();
-      if (done) return;
-      try { await fn(value); } catch (e) { log("задача сорвалась:", e.message); }
-    }
-  });
-  await Promise.all(workers);
-}
-
 const insertSignal = db.prepare(
   "INSERT OR IGNORE INTO signals" +
   "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol,agree) " +

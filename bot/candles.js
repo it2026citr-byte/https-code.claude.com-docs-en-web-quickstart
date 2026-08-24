@@ -2,6 +2,26 @@ import { fetchKlines } from "./data/mexc.js";
 import { log } from "./config.js";
 
 /**
+ * Обход списка с ограничением на число одновременных задач.
+ *
+ * Живёт здесь, потому что почти всегда ограничивают именно поход за
+ * свечами. Шестьдесят одновременных запросов к бирже проходят на
+ * быстром канале и намертво встают на телефоне через мобильный
+ * интернет — а биржа вдобавок вправе отбить пачку целиком.
+ */
+export async function mapLimit(items, n, fn) {
+  const it = items[Symbol.iterator]();
+  const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
+    for (;;) {
+      const { value, done } = it.next();
+      if (done) return;
+      try { await fn(value); } catch (e) { log("задача сорвалась:", e.message); }
+    }
+  });
+  await Promise.all(workers);
+}
+
+/**
  * Кеш свечей в памяти.
  *
  * В режиме фокуса структура пересчитывается каждые 10 секунд, а тянуть

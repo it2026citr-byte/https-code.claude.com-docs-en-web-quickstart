@@ -9,7 +9,7 @@ import { api, send, sendLong, sendDoc, sendPhoto, broadcast, broadcastDoc, editT
 import { topPairs } from "./data/tradingview.js";
 import { prices, lastPrice, deepHistory, pairExists } from "./data/mexc.js";
 import { monitorTick, closePosition, rAt, alertOnce } from "./monitor.js";
-import { candles } from "./candles.js";
+import { candles, mapLimit } from "./candles.js";
 import { atr } from "./indicators.js";
 import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
 import * as WL from "./watchlist.js";
@@ -234,10 +234,10 @@ async function zoneTick() {
   // Считаем по всем монетам разом: по очереди это столько ожиданий
   // сети, сколько монет, и первый такт после запуска растягивается.
   const vol = {};
-  await Promise.all(syms.map(async (s) => {
+  await mapLimit(syms, 6, async (s) => {
     const v = await dailyVol(s).catch(() => null);
     if (v) vol[s] = v;
-  }));
+  });
   const far = num("zone_far_share") / 100, near = num("zone_near_share") / 100;
 
   await checkTradable("BTCUSDT").catch(() => null);

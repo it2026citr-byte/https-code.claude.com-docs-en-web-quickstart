@@ -5,6 +5,23 @@ import { symbols as zoneSymbols } from "./zones.js";
 
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+/**
+ * Такт с ограничением по времени.
+ *
+ * Без него подвисший запрос к бирже останавливает весь цикл: следующий
+ * такт не начнётся, пока не завершится текущий, и бот замолкает
+ * насовсем. Обещание, которое не разрешилось, отменить нельзя — но
+ * можно перестать его ждать и пойти дальше.
+ */
+async function withDeadline(name, fn, ms) {
+  let timer;
+  const bell = new Promise((_, no) => {
+    timer = setTimeout(() => no(new Error(`${name}: не уложился в ${Math.round(ms / 1000)} с`)), ms);
+  });
+  try { return await Promise.race([fn(), bell]); }
+  finally { clearTimeout(timer); }
+}
+
 /** Сколько миллисекунд до закрытия следующей свечи в N минут (+ фора). */
 function msToNextBoundary(minutes, graceSec = 5) {
   const step = minutes * 60_000;
@@ -28,7 +45,10 @@ export function startLoops({ scanTick, watchTick, pulseTick }) {
         log("фокус: скан рынка пропущен");
         continue;
       }
-      try { await scanTick(); }
+      // Предел вдвое больше интервала: если такт съел его целиком,
+      // что-то пошло не так, и лучше начать новый, чем ждать вечно.
+      const limit = Math.max(120_000, num("scan_min") * 60_000 * 2);
+      try { await withDeadline("скан", scanTick, limit); }
       catch (e) { log("скан сорвался:", e.message); }
     }
   })();
@@ -41,7 +61,7 @@ export function startLoops({ scanTick, watchTick, pulseTick }) {
 
       if (!has) { await sleep(30_000); continue; }
 
-      try { await watchTick({ focus }); }
+      try { await withDeadline("присмотр", () => watchTick({ focus }), 120_000); }
       catch (e) { log("присмотр сорвался:", e.message); }
 
       await sleep(focus ? num("focus_sec") * 1000

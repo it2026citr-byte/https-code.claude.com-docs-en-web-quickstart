@@ -1,5 +1,5 @@
 import { log } from "./config.js";
-import { candles } from "./candles.js";
+import { candles, mapLimit } from "./candles.js";
 import { atr } from "./indicators.js";
 import { rejectReason } from "./data/tradable.js";
 import { num } from "./runtime.js";
@@ -43,6 +43,7 @@ export const DEFAULTS = {
   tgtAtr: 1.5,
   maxPairs: 60,     // сколько монет держим в сравнении
   cooldownH: 8,     // не повторяем ту же связку чаще
+  budgetMs: 90_000, // дольше полутора минут проход не тянем
 };
 
 /** Форма графика: окно, приведённое к первой свече, в процентах. */
@@ -101,16 +102,24 @@ export async function leadLag(symbols, opts = {}) {
   const pairs = symbols.filter(s => !rejectReason(s)).slice(0, P.maxPairs);
   if (pairs.length < 8) return [];
 
-  // 1. Свечи по всем парам. Одна упавшая пара не должна ронять проход.
+  // 1. Свечи по всем парам, не больше шести запросов разом. Одна
+  //    упавшая пара не должна ронять проход.
   const data = {};
-  await Promise.all(pairs.map(async (s) => {
+  const started = Date.now();
+  await mapLimit(pairs, 6, async (s) => {
+    if (Date.now() - started > P.budgetMs) return;   // не тянем бесконечно
     try {
       const c = await candles(s, P.tf, 300);
       if (c.length >= P.win + P.maxLag + P.pumpBars + 4) data[s] = c;
     } catch { /* пара просто не участвует */ }
-  }));
+  });
   const have = Object.keys(data);
-  if (have.length < 8) return [];
+  if (have.length < 8) {
+    log(`отстающие: пар с данными ${have.length}, пропускаю проход`);
+    return [];
+  }
+  if (Date.now() - started > P.budgetMs)
+    log(`отстающие: свечи собирались дольше отведённого, взято ${have.length} пар`);
 
   // 2. Кто только что сделал скачок. Индекс последнего закрытого бара
   //    у каждой пары свой — свечи могли прийти неровно.
