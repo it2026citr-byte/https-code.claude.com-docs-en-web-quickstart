@@ -29,9 +29,9 @@ const URL = "https://contract.mexc.com/api/v1/contract/ticker";
  * Поэтому сначала пробуем как есть, а при отказе — через curl.
  * На телефоне обычно хватает первого пути.
  */
-async function raw() {
+export async function futuresGet(url = URL) {
   try {
-    const r = await fetch(URL, {
+    const r = await fetch(url, {
       headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
     });
     if (r.ok) return await r.text();
@@ -41,7 +41,7 @@ async function raw() {
   }
   const { execFile } = await import("node:child_process");
   return new Promise((ok, no) => {
-    execFile("curl", ["-s", "-m", "25", "-A", "Mozilla/5.0", URL],
+    execFile("curl", ["-s", "-m", "25", "-A", "Mozilla/5.0", url],
       { maxBuffer: 32 * 1024 * 1024 },
       (err, out) => {
         if (err) return no(new Error(`curl не сработал: ${err.message}`));
@@ -54,7 +54,7 @@ async function raw() {
 async function pull() {
   // Биржа отдаёт все контракты одним запросом — по одному было бы
   // больше тысячи обращений на такт.
-  const body = await raw();
+  const body = await futuresGet();
   let j;
   try { j = JSON.parse(body); }
   catch { throw new Error("ответ не разобрался как JSON"); }

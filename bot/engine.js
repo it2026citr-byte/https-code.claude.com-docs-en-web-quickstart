@@ -8,7 +8,7 @@ import { logEvent } from "./journal.js";
 import { num } from "./runtime.js";
 import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
-import { rejectReason } from "./data/tradable.js";
+import { rejectReason, loadClosed } from "./data/tradable.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 const insertSignal = db.prepare(
@@ -64,6 +64,9 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   // Список контрактов нужен и стратегии на ставке, и отсеву пар:
   // торгуем только бессрочные фьючерсы криптовалют.
   await refreshFunding();
+  // Какие контракты закрыты для обычной торговли. Список отдельный:
+  // скринер, по которому собран автоподбор, про доступ не знает.
+  await loadClosed();
 
   // Автоподбор фьючерсы уже отфильтровал, а монеты из моего списка —
   // нет: пару могли добавить давно или снять с фьючерсов после.
