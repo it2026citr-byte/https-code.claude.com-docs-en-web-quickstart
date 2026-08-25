@@ -30,3 +30,11 @@ export const fmtTime = (sec) =>
     day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
     timeZone: "UTC",
   }) + " UTC";
+
+/**
+ * Начало суток по UTC для отметки времени в секундах.
+ * Нужен и дневному отчёту, и команде /results — потому и здесь,
+ * а не в одном из них.
+ */
+export const startOfDayUtc = (ts) =>
+  Math.floor(Date.parse(new Date(ts * 1000).toISOString().slice(0, 10)) / 1000);

@@ -65,7 +65,9 @@ if (!cfg.token) {
  * сдвигала бы номер, хотя код бота не менялся ни на строку, и по номеру
  * нельзя было бы понять, свежий он или нет.
  */
+let verCache = null;
 export function codeVersion() {
+  if (verCache) return verCache;
   try {
     const { execFileSync } = require("node:child_process");
     const run = (args) => execFileSync("git", ["-C", ROOT, ...args],
@@ -74,7 +76,7 @@ export function codeVersion() {
                       "--date=format:%d.%m %H:%M", "--", "."]);
     if (!line) return { hash: "?", date: "версия не определена" };
     const [hash, date] = line.split("\t");
-    return { hash, date };
+    return (verCache = { hash, date });
   } catch {
     return { hash: "?", date: "версия не определена" };
   }
