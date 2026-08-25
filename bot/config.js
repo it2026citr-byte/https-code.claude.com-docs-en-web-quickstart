@@ -59,14 +59,22 @@ if (!cfg.token) {
  * Версия кода — короткий хеш коммита и его дата. Нужна, чтобы отличать
  * «обновил файлы» от «перезапустил процесс»: git pull меняет файлы,
  * но работающий Node держит в памяти старый код.
+ *
+ * Берётся последний коммит, тронувший саму папку бота, а не HEAD всего
+ * репозитория. Иначе правка соседнего каталога — заметок, описания —
+ * сдвигала бы номер, хотя код бота не менялся ни на строку, и по номеру
+ * нельзя было бы понять, свежий он или нет.
  */
 export function codeVersion() {
   try {
     const { execFileSync } = require("node:child_process");
     const run = (args) => execFileSync("git", ["-C", ROOT, ...args],
       { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    return { hash: run(["rev-parse", "--short", "HEAD"]),
-             date: run(["log", "-1", "--format=%cd", "--date=format:%d.%m %H:%M"]) };
+    const line = run(["log", "-1", "--format=%h\t%cd",
+                      "--date=format:%d.%m %H:%M", "--", "."]);
+    if (!line) return { hash: "?", date: "версия не определена" };
+    const [hash, date] = line.split("\t");
+    return { hash, date };
   } catch {
     return { hash: "?", date: "версия не определена" };
   }

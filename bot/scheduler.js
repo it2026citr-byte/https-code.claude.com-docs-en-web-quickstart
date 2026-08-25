@@ -112,16 +112,4 @@ export function startReports({ onDaily, onMonthly }) {
       await sleep(60_000);
     }
   })();
-
-  // Пульс живёт своим ритмом, не привязан к скану. Ноль — выключен.
-  (async function pulseLoop() {
-    for (;;) {
-      const m = num("pulse_min");
-      if (m <= 0) { await sleep(60_000); continue; }
-      await sleep(msToNextBoundary(m));
-      if (num("pulse_min") <= 0) continue;      // успели выключить, пока спали
-      try { await pulseTick(); }
-      catch (e) { log("пульс сорвался:", e.message); }
-    }
-  })();
 }
