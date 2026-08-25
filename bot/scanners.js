@@ -86,7 +86,8 @@ const pct = (c, from, to) =>
  * Telegram применяется со следующего скана, перезапускать нечего.
  */
 function fromSettings() {
-  const lag = Math.max(1, Math.round(num("ll_lag") / 15));   // минуты → бары
+  // Ниже pumpBars сдвиг смысла не имеет — см. разбор у saByLag.
+  const lag = Math.max(DEFAULTS.pumpBars, Math.round(num("ll_lag") / 15));
   return {
     pumpPct: num("ll_pump"),
     minCorr: num("ll_corr") / 100,
@@ -129,8 +130,23 @@ export async function leadLag(symbols, opts = {}) {
     const jump = pct(ca, ia - P.pumpBars, ia);
     if (jump == null || Math.abs(jump) < P.pumpPct) continue;
     const up = jump > 0;
-    const sa = shape(ca, ia - P.pumpBars, P.win);   // форма ДО скачка
-    if (!sa) continue;
+
+    // Формы лидера на разных отступах назад.
+    //
+    // Здесь была ошибка, из-за которой сканер искал не то, что заявлено.
+    // Если ведомая отстаёт на lag баров, то её СЕГОДНЯШНЯЯ форма похожа
+    // на форму лидера lag баров НАЗАД. Раньше отматывалась назад ведомая,
+    // а не лидер, — то есть сравнивалось ровно наоборот, и на проверке,
+    // где ведомая заведомо повторяла лидера с задержкой в 12 баров,
+    // находился сдвиг 1 при совпадении 5%. После разворота — 12 и 100%.
+    //
+    // Отступ начинается с pumpBars, а не с единицы: при меньшем отступ
+    // попадал бы внутрь самого скачка, и тихая форма ведомой сравнивалась
+    // бы с уже разогнавшимся лидером.
+    const saByLag = [];
+    for (let lag = P.pumpBars; lag <= P.maxLag; lag++)
+      saByLag[lag] = shape(ca, ia - lag, P.win);
+    if (!saByLag.some(Boolean)) continue;
 
     // 3. Кто похож на лидера до скачка и сам ещё стоит.
     let best = null;
@@ -140,9 +156,12 @@ export async function leadLag(symbols, opts = {}) {
       const own = pct(cb, ib - P.pumpBars, ib);
       if (own == null) continue;
       if (Math.abs(own) > Math.abs(jump) * P.quietShare) continue;
-      for (let lag = 1; lag <= P.maxLag; lag++) {
-        const sb = shape(cb, ib - P.pumpBars - lag, P.win);
-        if (!sb) continue;
+      // Форма ведомой считается один раз: от сдвига она не зависит.
+      const sb = shape(cb, ib, P.win);
+      if (!sb) continue;
+      for (let lag = P.pumpBars; lag <= P.maxLag; lag++) {
+        const sa = saByLag[lag];
+        if (!sa) continue;
         const k = corr(sa, sb);
         if (k >= P.minCorr && (!best || k > best.corr))
           best = { symbol: B, corr: k, lag, own };
