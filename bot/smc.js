@@ -109,6 +109,9 @@ export function zonePos(price, top, bottom) {
 /**
  * Ордер-блок: последняя свеча против движения перед сломом структуры.
  * Ищем назад не дальше lookback баров.
+ *
+ * Ни одной стратегией пока не используется — это кирпич для своих,
+ * описанный в СТРАТЕГИИ.md. Поэтому и живёт, хотя вызовов нет.
  */
 export function orderBlocks(c, str, lookback = 30) {
   const ob = new Array(c.length).fill(null);   // { lo, hi, side } действующий на баре i

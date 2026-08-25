@@ -13,10 +13,10 @@ import { candles, mapLimit } from "./candles.js";
 import { atr } from "./indicators.js";
 import { PARAMS, GROUPS, paramsOf, num, setNum, fmtVal, reportHourUtc } from "./runtime.js";
 import * as WL from "./watchlist.js";
-import { tuneStrategy } from "./tune.js";
+import { tuneAll } from "./tune.js";
 import * as ZN from "./zones.js";
 import * as PZ from "./data/prizrak.js";
-import { checkTradable, rejectReason } from "./data/tradable.js";
+import { checkTradable, rejectReason, ready as tradableReady, listsState } from "./data/tradable.js";
 import { checkAll, renderHealth } from "./health.js";
 import { cacheSize } from "./candles.js";
 import { loadStrategies } from "./strategies/index.js";
@@ -240,7 +240,9 @@ async function zoneTick() {
   });
   const far = num("zone_far_share") / 100, near = num("zone_near_share") / 100;
 
-  await checkTradable("BTCUSDT").catch(() => null);
+  // Присмотр идёт и в фокусе, когда скан не работает, — списки для
+  // отсева здесь свои, а не унаследованные от такта сканирования.
+  await tradableReady();
 
   // Собираем события по монете: три уровня по одной монете не должны
   // приходить тремя сообщениями подряд.
@@ -602,7 +604,12 @@ async function statusText(withHealth = true) {
   if (withHealth) {
     lines.push("", "<b>Связь:</b>");
     lines.push(renderHealth(await checkAll()));
-    lines.push(`<i>свечей в кеше: ${cacheSize()} пар</i>`);
+    // Без списков отсев отказывает всем парам, и бот молчит. Молчание
+    // от «нечего сказать» и от «не смог проверить» надо различать.
+    const L = listsState();
+    lines.push(L.perp && L.closed
+      ? `<i>свечей в кеше: ${cacheSize()} пар · фьючерсов ${L.perp}, из них закрыто ${L.closed}</i>`
+      : `⚠️ <b>Списки фьючерсов не загружены</b> — сигналов не будет, пока не поднимутся.`);
   }
   return lines.join("\n");
 }
@@ -796,17 +803,9 @@ async function onMessage(msg) {
         // проверка на последних 30%, которых подбор не видел.
         if (wait) await editText(chatId, wait.message_id,
           `🔧 <b>${esc(sym)}</b> · подбираю параметры под монету…`);
-        const tuned = {}, tuneRows = [];
-        for (const st of STRATEGIES) {
-          const c = await WL.candlesFor(sym, st).catch(() => null);
-          if (!c) continue;
-          const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48, sym).catch(() => null);
-          if (!t) continue;
-          if (t.chosen) tuned[st.id] = t.params;
-          tuneRows.push({ id: st.id, ...t });
-        }
+        const { params, rows: tuneRows } = await tuneAll(sym, STRATEGIES, WL.candlesFor);
 
-        WL.add(sym, res, Object.keys(tuned).length ? tuned : null);
+        WL.add(sym, res, params);
         logEvent({ kind: "note", symbol: sym, text: "монета добавлена в список" });
 
         if (wait) await editText(chatId, wait.message_id,
@@ -900,7 +899,7 @@ async function onMessage(msg) {
 
         let added = 0, noPair = 0, far = 0, dup = 0, done = 0;
         const seen = new Set();
-        await checkTradable("BTCUSDT").catch(() => null);   // подтянуть список контрактов
+        await tradableReady();
         let notFut = 0;
         for (const r of rows) {
           const owner = pick(r);
@@ -1074,18 +1073,9 @@ async function onMessage(msg) {
       if (!sym) { await send(chatId, "Так: <code>/tune ZECUSDT</code>"); break; }
       if (!WL.has(sym)) { await send(chatId, `<b>${esc(sym)}</b> не в списке. Сначала <code>/add ${esc(sym)}</code>`); break; }
       const wait = await send(chatId, `🔧 Подбираю параметры под <b>${esc(sym)}</b>…`);
-      const tuned = {}, rows = [];
-      for (const st of STRATEGIES) {
-        const c = await WL.candlesFor(sym, st).catch(() => null);
-        if (!c) continue;
-        const t = await tuneStrategy(st, c, st.timeframe === "4h" ? 12 : 48, sym).catch(() => null);
-        if (!t) continue;
-        if (t.chosen) tuned[st.id] = t.params;
-        rows.push({ id: st.id, ...t });
-      }
+      const { params, rows } = await tuneAll(sym, STRATEGIES, WL.candlesFor);
       const old = WL.list().find(r => r.symbol === sym);
-      WL.add(sym, old?.stats ? JSON.parse(old.stats) : null,
-             Object.keys(tuned).length ? tuned : null);
+      WL.add(sym, old?.stats ? JSON.parse(old.stats) : null, params);
       const txt = `🔧 <b>${esc(sym)}</b>` + tuneText(rows);
       if (wait) await editText(chatId, wait.message_id, txt); else await sendLong(chatId, txt);
       break;

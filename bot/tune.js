@@ -1,4 +1,5 @@
 import { num } from "./runtime.js";
+import { log } from "./config.js";
 
 /**
  * Подбор параметров под конкретную монету.
@@ -66,7 +67,7 @@ const combos = (grid) => {
   return out;
 };
 
-export async function tuneStrategy(strategy, candles, hold, symbol) {
+async function tuneStrategy(strategy, candles, hold, symbol) {
   const beAt = num("be_at") / 100;
   const c = candles;
   const warm = strategy.warmup;
@@ -100,4 +101,31 @@ export async function tuneStrategy(strategy, candles, hold, symbol) {
     baseTrain, baseTest,
     why: better ? null : "на проверочной части не обошла умолчания",
   };
+}
+
+/**
+ * Подбор по всем стратегиям сразу — то, что нужно и при добавлении
+ * монеты, и при отдельной перенастройке.
+ *
+ * Стратегия, для которой не набралось свечей или подбор не сошёлся,
+ * молча пропускается: одна неудача не должна лишать монету остальных.
+ * Горизонт удержания — 12 баров на четырёхчасовках и 48 на прочих,
+ * то есть двое суток в обоих случаях.
+ *
+ * candlesFor приходит параметром, а не импортом: иначе tune.js и
+ * watchlist.js ссылались бы друг на друга по кругу.
+ */
+export async function tuneAll(symbol, strategies, candlesFor) {
+  const params = {}, rows = [];
+  for (const st of strategies) {
+    const c = await candlesFor(symbol, st).catch(() => null);
+    if (!c) continue;
+    const hold = st.timeframe === "4h" ? 12 : 48;
+    const t = await tuneStrategy(st, c, hold, symbol).catch(
+      (e) => { log(`подбор ${st.id} по ${symbol} сорвался: ${e.message}`); return null; });
+    if (!t) continue;
+    if (t.chosen) params[st.id] = t.params;
+    rows.push({ id: st.id, ...t });
+  }
+  return { params: Object.keys(params).length ? params : null, rows };
 }

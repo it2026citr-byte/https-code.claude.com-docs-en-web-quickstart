@@ -86,8 +86,3 @@ export async function candles(symbol, tf, limit = 300) {
 }
 
 export const cacheSize = () => cache.size;
-export const cacheBytes = () => {
-  let n = 0;
-  for (const v of cache.values()) n += v.arr.length;
-  return n * 160;                 // грубо: свеча с накладными расходами
-};

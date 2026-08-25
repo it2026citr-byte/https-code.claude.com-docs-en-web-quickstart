@@ -93,8 +93,7 @@ export async function refresh() {
 
 /** Ставка по паре в процентах. null — данных нет. */
 export const rateOf = (symbol) => cache.map.get(symbol)?.rate ?? null;
+/** Кирпич для своих стратегий, описан в СТРАТЕГИИ.md — отсюда вызовов нет. */
 export const infoOf = (symbol) => cache.map.get(symbol) ?? null;
-export const known = () => cache.map.size;
-export const stale = () => Date.now() - cache.at > 2 * CACHE_MS;
 
 export { toContract };

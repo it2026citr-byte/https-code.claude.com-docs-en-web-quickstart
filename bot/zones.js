@@ -64,15 +64,6 @@ export function add({ symbol, side, lo, hi, note, source = "manual", armed }) {
 export const arm = (id) =>
   db.prepare("UPDATE zones SET armed=1 WHERE id=?").run(id).changes > 0;
 
-export function edit(id, { lo, hi, note }) {
-  const z = get(id);
-  if (!z) return false;
-  const a = lo ?? z.lo, b = hi ?? z.hi;
-  db.prepare("UPDATE zones SET lo=?, hi=?, note=?, near_at=NULL, close_at=NULL, fired_at=NULL WHERE id=?")
-    .run(Math.min(a, b), Math.max(a, b), note ?? z.note, id);
-  return true;
-}
-
 /** Сбросить отметки, чтобы зона снова могла сработать. */
 export const rearm = (id) =>
   db.prepare("UPDATE zones SET near_at=NULL, close_at=NULL, fired_at=NULL WHERE id=?").run(id);
