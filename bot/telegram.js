@@ -40,18 +40,64 @@ export async function send(chatId, text, keyboard = null, replyTo = null) {
 }
 
 /** Telegram режет сообщения на 4096 символах — бьём по карточкам. */
+const LIMIT = 3800;
+
+/**
+ * Разбить текст так, чтобы каждый кусок влезал в сообщение.
+ *
+ * Три уровня, от бережного к грубому: по пустым строкам, затем по
+ * обычным переводам строки, затем просто по длине. Раньше был только
+ * первый, и сплошной текст без пустых строк не резался вовсе —
+ * Telegram отвергал такое сообщение целиком, а человек не получал
+ * ничего. Список зон по монете именно такой: строки идут подряд.
+ */
+function split(text) {
+  if (text.length <= LIMIT) return [text];
+
+  const glue = (blocks, sep) => {
+    const out = [];
+    let buf = "";
+    for (const b of blocks) {
+      if (buf && (buf + sep + b).length > LIMIT) { out.push(buf); buf = b; }
+      else buf = buf ? buf + sep + b : b;
+    }
+    if (buf) out.push(buf);
+    return out;
+  };
+
+  const hard = (s) => {
+    const out = [];
+    for (let i = 0; i < s.length; i += LIMIT) out.push(s.slice(i, i + LIMIT));
+    return out;
+  };
+
+  return glue(text.split("\n\n"), "\n\n")
+    .flatMap(p => p.length <= LIMIT ? [p] : glue(p.split("\n"), "\n"))
+    .flatMap(p => p.length <= LIMIT ? [p] : hard(p));
+}
+
 export async function sendLong(chatId, text, keyboard = null) {
-  const LIMIT = 3800;
-  if (text.length <= LIMIT) return send(chatId, text, keyboard);
-  const parts = [];
-  let buf = "";
-  for (const block of text.split("\n\n")) {
-    if ((buf + "\n\n" + block).length > LIMIT && buf) { parts.push(buf); buf = block; }
-    else buf = buf ? buf + "\n\n" + block : block;
-  }
-  if (buf) parts.push(buf);
+  const parts = split(text);
   let last = null;
   for (let i = 0; i < parts.length; i++)
+    last = await send(chatId, parts[i], i === parts.length - 1 ? keyboard : null);
+  return last;
+}
+
+/**
+ * Заменить сообщение-заглушку («Строю зоны…») готовым ответом.
+ *
+ * Правка не умеет резать длинный текст: Telegram отвергает всё
+ * сообщение целиком, заглушка остаётся висеть, и со стороны это
+ * неотличимо от зависшего бота. Поэтому длинный ответ кладём в
+ * заглушку первым куском, а остальное досылаем следом.
+ */
+export async function editLong(chatId, msgId, text, keyboard = null) {
+  if (!msgId) return sendLong(chatId, text, keyboard);
+  const parts = split(text);
+  await editText(chatId, msgId, parts[0], parts.length === 1 ? keyboard : null);
+  let last = null;
+  for (let i = 1; i < parts.length; i++)
     last = await send(chatId, parts[i], i === parts.length - 1 ? keyboard : null);
   return last;
 }

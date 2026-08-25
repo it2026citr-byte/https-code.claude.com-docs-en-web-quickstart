@@ -3,7 +3,7 @@ import {
   db, now, getSetting, setSetting, upsertUser, openPositions,
   getUser, setRole, listUsers, getMode, setMode, MODE_SCAN, MODE_FOCUS,
 } from "./db.js";
-import { send, sendLong, sendDoc, sendPhoto, editText, answerCallback, esc } from "./telegram.js";
+import { send, sendLong, sendDoc, sendPhoto, editText, editLong, answerCallback, esc } from "./telegram.js";
 import { prices, lastPrice, deepHistory, pairExists } from "./data/mexc.js";
 import { checkTradable, rejectReason, listsState, ready as tradableReady } from "./data/tradable.js";
 import { closePosition, rAt } from "./monitor.js";
@@ -292,7 +292,7 @@ export async function onMessage(msg) {
         if (WL.noHistory(res)) {
           const t = `<b>${esc(sym)}</b> — истории не хватает даже на прогрев ` +
                     `индикаторов. Монета слишком молодая или биржа не отдаёт свечи.`;
-          if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+          await editLong(chatId, wait?.message_id, t);
           break;
         }
         // Подгонка параметров под монету — на первых 70% истории,
@@ -311,8 +311,7 @@ export async function onMessage(msg) {
         const txt = analysisText(sym, res) + tuneText(tuneRows) +
           (zn.short ? "" : zonesText(sym, zn.zones, zn.weak)) +
           `\n\n✅ <b>Добавлена в список</b> — теперь сканируется всегда.`;
-        if (wait) await editText(chatId, wait.message_id, txt);
-        else await sendLong(chatId, txt);
+        await editLong(chatId, wait?.message_id, txt);
       } catch (e) {
         await send(chatId, `Не смог разобрать <b>${esc(sym)}</b>: ${esc(e.message)}`);
       }
@@ -328,7 +327,7 @@ export async function onMessage(msg) {
         const pics = PZ.charts(list).filter(x => (Date.parse(x.date) || 0) >= since);
         if (!pics.length) {
           const t = `За ${days} дн разборов с картинками не нашёл.`;
-          if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+          await editLong(chatId, wait?.message_id, t);
           break;
         }
         if (wait) await editText(chatId, wait.message_id,
@@ -369,7 +368,7 @@ export async function onMessage(msg) {
         if (!rows.length) {
           const t = `Постов прочитал ${list.length}, уровней не нашёл — ` +
                     `видимо в канале сменился формат записи.`;
-          if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+          await editLong(chatId, wait?.message_id, t);
           break;
         }
 
@@ -445,7 +444,7 @@ export async function onMessage(msg) {
           `<i>Добавлены как непринятые: посмотри <code>/zones</code> и прими ` +
           `кнопкой те, что считаешь рабочими. Сторожить цену буду по всем, ` +
           `но сигнал дам только по принятым.</i>`;
-        if (wait) await editText(chatId, wait.message_id, t); else await sendLong(chatId, t);
+        await editLong(chatId, wait?.message_id, t);
       } catch (e) {
         await send(chatId, `Не смог прочитать канал: ${esc(e.message)}`);
       }
@@ -462,7 +461,7 @@ export async function onMessage(msg) {
         const t = zn.short
           ? `<b>${esc(arg)}</b> — истории мало, зоны не строю.`
           : `🎯 <b>${esc(arg)}</b>` + zonesText(arg, zn.zones, zn.weak);
-        if (wait) await editText(chatId, wait.message_id, t); else await send(chatId, t);
+        await editLong(chatId, wait?.message_id, t);
         break;
       }
       const list = arg ? ZN.forSymbol(arg) : ZN.all();
@@ -487,8 +486,19 @@ export async function onMessage(msg) {
       // Цены — одним запросом на все монеты: по одной это столько
       // обращений к бирже, сколько монет в списке.
       const allPx = await prices([...byCoin.keys()]).catch(() => ({}));
-      for (const [sym, zs] of byCoin) {
+      // Сколько зон по монете показываем за раз. Ограничение не
+      // косметическое: у Telegram есть предел и на длину сообщения, и на
+      // число кнопок, а после /levels зон по одной монете набирается
+      // много. Превысив предел, сообщение не приходит вовсе.
+      const PER_COIN = 12;
+      for (const [sym, all] of byCoin) {
         const px = allPx[sym] ?? null;
+        const zs = (px
+          ? [...all].sort((a, b) =>
+              Math.min(Math.abs(a.lo - px), Math.abs(a.hi - px)) -
+              Math.min(Math.abs(b.lo - px), Math.abs(b.hi - px)))
+          : all).slice(0, PER_COIN);
+        const hidden = all.length - zs.length;
         const lines = zs.map(z => {
           const away = px ? Math.abs((z.side === "long" ? px - z.hi : z.lo - px)) / px * 100 : null;
           return `${z.side === "long" ? "🟢" : "🔴"} <b>${fmtPrice(z.lo)} — ${fmtPrice(z.hi)}</b>` +
@@ -508,7 +518,8 @@ export async function onMessage(msg) {
           kb.push([{ text: `🗑 Убрать все по ${sym.replace("USDT", "")}`,
                      callback_data: `zdelall:${sym}` }]);
         await send(chatId,
-          `<b>${esc(sym)}</b>${px ? ` · ${fmtPrice(px)}` : ""}\n` + lines.join("\n"), kb);
+          `<b>${esc(sym)}</b>${px ? ` · ${fmtPrice(px)}` : ""}\n` + lines.join("\n") +
+          (hidden ? `\n<i>…и ещё ${hidden}. Показаны ближайшие к цене.</i>` : ""), kb);
       }
       break;
     }
@@ -573,7 +584,7 @@ export async function onMessage(msg) {
       const old = WL.list().find(r => r.symbol === sym);
       WL.add(sym, old?.stats ? JSON.parse(old.stats) : null, params);
       const txt = `🔧 <b>${esc(sym)}</b>` + tuneText(rows);
-      if (wait) await editText(chatId, wait.message_id, txt); else await sendLong(chatId, txt);
+      await editLong(chatId, wait?.message_id, txt);
       break;
     }
 

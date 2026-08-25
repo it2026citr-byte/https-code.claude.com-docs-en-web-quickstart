@@ -61,8 +61,15 @@ export function settingsKeyboard(g) {
   const kb = [];
   for (const key of paramsOf(g)) {
     const p = PARAMS[key], cur = num(key);
+    // Текущее значение обязано быть среди кнопок. Иначе получается
+    // ловушка: значение по умолчанию не совпадало со списком вариантов
+    // (у «Пар в работе» стояло 80 при вариантах 50/100/200/350/500),
+    // ничего не подсвечивалось, и вернуться к нему было нельзя.
+    const opts = p.opts.includes(cur)
+      ? p.opts
+      : [...p.opts, cur].sort((a, b) => a - b);
     kb.push([{ text: `— ${p.title} —`, callback_data: "noop" }]);
-    kb.push(p.opts.map(v => ({
+    kb.push(opts.map(v => ({
       text: (v === cur ? "• " : "") + optLabel(key, v),
       callback_data: `cfg:${key}:${v}:${g}`,
     })));
