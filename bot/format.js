@@ -1,12 +1,25 @@
+/**
+ * Форматирование чисел для сообщений.
+ *
+ * Все четыре функции переживают пустое и нечисловое значение, отдавая
+ * прочерк. Причина не в аккуратности: форматирование вызывается уже
+ * внутри собранного сообщения, и падение здесь означает не «кривая
+ * цифра», а несостоявшееся сообщение целиком — о достигнутой цели или
+ * о стопе. Пропущенное значение видно как «—», и это лучше молчания.
+ */
+const bad = (v) => typeof v !== "number" || !Number.isFinite(v);
+
 /** Цена с разумным числом знаков: 77228.03, 4.9450, 0.00012345 */
 export function fmtPrice(p) {
+  if (bad(p)) return "—";
   const a = Math.abs(p);
   const d = a >= 1000 ? 2 : a >= 10 ? 3 : a >= 1 ? 4 : a >= 0.01 ? 5 : 8;
   return p.toFixed(d).replace(/(\.\d*?[1-9])0+$/, "$1").replace(/\.0+$/, "");
 }
-export const fmtPct = (x) => (x > 0 ? "+" : "") + x.toFixed(2) + "%";
+export const fmtPct = (x) => bad(x) ? "—" : (x > 0 ? "+" : "") + x.toFixed(2) + "%";
 
 export function fmtUsd(v) {
+  if (bad(v)) return "—";
   if (v >= 1e9) return (v / 1e9).toFixed(1) + " млрд";
   if (v >= 1e6) return (v / 1e6).toFixed(1) + " млн";
   if (v >= 1e3) return (v / 1e3).toFixed(0) + " тыс";
@@ -15,6 +28,7 @@ export function fmtUsd(v) {
 
 /** «2 ч 14 мин», «3 дн 5 ч», «47 сек» */
 export function fmtAgo(sec) {
+  if (bad(sec)) return "—";
   sec = Math.max(0, Math.round(sec));
   if (sec < 60) return `${sec} сек`;
   const m = Math.floor(sec / 60);
@@ -26,7 +40,7 @@ export function fmtAgo(sec) {
 }
 
 export const fmtTime = (sec) =>
-  new Date(sec * 1000).toLocaleString("ru-RU", {
+  bad(sec) ? "—" : new Date(sec * 1000).toLocaleString("ru-RU", {
     day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
     timeZone: "UTC",
   }) + " UTC";
@@ -37,4 +51,4 @@ export const fmtTime = (sec) =>
  * а не в одном из них.
  */
 export const startOfDayUtc = (ts) =>
-  Math.floor(Date.parse(new Date(ts * 1000).toISOString().slice(0, 10)) / 1000);
+  bad(ts) ? 0 : Math.floor(Date.parse(new Date(ts * 1000).toISOString().slice(0, 10)) / 1000);

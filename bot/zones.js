@@ -177,6 +177,10 @@ function roundLevels(px) {
 export const WEIGHTS = { box: 2, swing: 1, vol: 1, round: 1, touch: 0 };
 
 export function propose(c, opts = {}) {
+  // Единственный вызов в боте идёт после проверки на 400 свечей, но
+  // отдельная проверка тут дешевле, чем падение, если кто-то позовёт
+  // напрямую — например, из новой стратегии.
+  if (!c || c.length < 50) return [];
   const {
     maxZones = 6, minScore = 3, nearPct = 0.5, trend = true,
     // Ширина зоны меряется в ATR, потому что в процентах цены она для

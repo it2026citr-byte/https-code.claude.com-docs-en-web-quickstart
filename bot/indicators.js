@@ -205,7 +205,10 @@ export function dailyVolatility(daily, days) {
   const s = daily.slice(-days);
   const need = Math.min(days, Math.round(days * 0.8));
   if (s.length < need || s.length < 5) return null;
-  let sum = 0;
-  for (const c of s) sum += (c.h - c.l) / c.c;
-  return sum / s.length * 100;
+  // Свечи с нулевой ценой закрытия биржа отдаёт по снятым с торгов
+  // парам. Без этой проверки деление даёт NaN, и он тихо расходится
+  // дальше: в пороги зон, в подпись сигнала, в отбор.
+  let sum = 0, n = 0;
+  for (const c of s) { if (!(c.c > 0)) continue; sum += (c.h - c.l) / c.c; n++; }
+  return n >= 5 ? sum / n * 100 : null;
 }

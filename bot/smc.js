@@ -60,6 +60,10 @@ export function legs(c, size) {
  * прежнего смещения, и CHoCH, если против — то есть разворот.
  */
 export function structureBias(c, size) {
+  // Пустой ряд сюда прийти не должен — стратегии зовут после прогрева, —
+  // но обращение к c[0] ниже сделало бы из этого падение вместо
+  // «сигнала нет». Дешевле вернуть пустую структуру.
+  if (!c?.length) return { bias: [], event: [], top: [], bottom: [] };
   const { swingHigh, swingLow } = legs(c, size);
   const bias = new Array(c.length).fill(0);
   const event = new Array(c.length).fill(null);   // "BOS" | "CHoCH"
