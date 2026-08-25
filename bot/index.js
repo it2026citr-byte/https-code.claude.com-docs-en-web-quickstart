@@ -439,5 +439,24 @@ async function main() {
   await startPolling({ onMessage: CMD.onMessage, onCallback: CMD.onCallback });
 }
 
+/**
+ * Отказ обещания, который никто не поймал, в Node 22 по умолчанию
+ * валит процесс. Сторож поднимет бота заново, но присмотр за сделками
+ * прервётся из-за сбоя где-нибудь в отправке картинки — цена
+ * несоразмерна. Поэтому пишем в лог и работаем дальше.
+ *
+ * С исключением иначе: после него состояние неизвестно, и продолжать
+ * опаснее, чем перезапуститься. Выходим с ненулевым кодом — сторож
+ * поднимет, а в логе останется запись, почему.
+ */
+process.on("unhandledRejection", (e) => {
+  log("необработанный отказ:", e?.stack ?? e?.message ?? String(e));
+});
+process.on("uncaughtException", (e) => {
+  log("необработанное исключение, перезапускаюсь:", e?.stack ?? String(e));
+  try { db.close(); } catch { /* уже закрыта */ }
+  process.exit(1);
+});
+
 process.on("SIGINT", () => { log("остановка"); db.close(); process.exit(0); });
 main().catch(e => { log("фатально:", e.message); process.exit(1); });

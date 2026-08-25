@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS journal (
 );
 CREATE INDEX IF NOT EXISTS journal_month ON journal(month, ts);
 CREATE INDEX IF NOT EXISTS journal_ts ON journal(ts);
+-- Открытые сделки перебираются каждый такт присмотра, а закрытые
+-- копятся и никуда не деваются: без индекса цена запроса растёт
+-- вместе с историей.
+CREATE INDEX IF NOT EXISTS positions_open ON positions(status);
+CREATE INDEX IF NOT EXISTS positions_closed ON positions(status, closed_at);
 `);
 
 // Свечи когда-то складывались в базу, но читать их оттуда так и не

@@ -229,7 +229,7 @@ export async function onMessage(msg) {
         const tg = JSON.parse(p.targets);
         const r = cur == null ? null : rAt(p, cur);
         await send(chatId, [
-          `${p.side === "long" ? "📈" : "📉"} <b>${p.symbol}</b> ${p.side === "long" ? "LONG" : "SHORT"} · <i>${p.strategy}</i>`,
+          `${p.side === "long" ? "📈" : "📉"} <b>${esc(p.symbol)}</b> ${p.side === "long" ? "LONG" : "SHORT"} · <i>${esc(p.strategy)}</i>`,
           `Вход ${fmtPrice(p.entry)} · стоп ${fmtPrice(p.sl_current)}` +
             (p.sl_current !== p.sl ? " <i>(безубыток)</i>" : ""),
           `Целей взято ${p.tp_hit} из ${tg.length}` +
@@ -823,7 +823,11 @@ export async function onCallback(q) {
   }
 
   // Решения по открытой позиции.
-  if (act0 === "exit" || act0 === "stay" || act0 === "close") {
+  // Раньше сюда же был приписан close — но он разбирается выше вместе
+  // с tsl и до этой ветки не доходил. Оставлять недостижимый разбор
+  // вредно: правка в нём выглядит применённой, а на деле мертва.
+  if (act0 === "exit" || act0 === "stay") {
+    if (chatId !== ownerId()) { await answerCallback(q.id, "Только администратор"); return; }
     const pid = Number(String(q.data).split(":")[1]);
     const p = db.prepare("SELECT * FROM positions WHERE id=?").get(pid);
     if (!p) { await answerCallback(q.id, "Позиция не найдена"); return; }
@@ -838,12 +842,11 @@ export async function onCallback(q) {
     let px;
     try { px = await lastPrice(p.symbol); }
     catch { await answerCallback(q.id, "Цена не пришла, попробуй ещё раз"); return; }
-    const reason = act0 === "exit" ? "broken" : "manual";
-    const r = closePosition(p, px, reason);
+    const r = closePosition(p, px, "broken");
     await answerCallback(q.id, "Закрыл");
     await postUpdate(pid,
-      `${act0 === "exit" ? "🟠" : "⚫️"} <b>Сделка закрыта ${act0 === "exit" ? "по слому стратегии" : "вручную"}</b>\n` +
-      `${p.symbol} · выход ${fmtPrice(px)} · итог <b>${r > 0 ? "+" : ""}${r.toFixed(2)}R</b>`);
+      `🟠 <b>Сделка закрыта по слому стратегии</b>\n` +
+      `${esc(p.symbol)} · выход ${fmtPrice(px)} · итог <b>${r > 0 ? "+" : ""}${r.toFixed(2)}R</b>`);
     return;
   }
   const [action, idStr] = String(q.data || "").split(":");
