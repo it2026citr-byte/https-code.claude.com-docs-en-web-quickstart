@@ -126,6 +126,8 @@ try {
   if (!cols.includes("vol")) db.exec("ALTER TABLE signals ADD COLUMN vol TEXT");
   // Согласие стратегий: сколько условий выполнено у каждой, JSON.
   if (!cols.includes("agree")) db.exec("ALTER TABLE signals ADD COLUMN agree TEXT");
+  // Доли фиксации по целям, JSON. Пусто — классические 20% на каждой.
+  if (!cols.includes("shares")) db.exec("ALTER TABLE signals ADD COLUMN shares TEXT");
 }
 
 {
@@ -142,6 +144,9 @@ try {
   // встать раньше первой цели.
   if (!cols.includes("be_armed"))
     db.exec("ALTER TABLE positions ADD COLUMN be_armed INTEGER DEFAULT 0");
+  // Доли фиксации по целям, JSON — переезжают из сигнала при взятии.
+  if (!cols.includes("shares"))
+    db.exec("ALTER TABLE positions ADD COLUMN shares TEXT");
 }
 
 const _get = db.prepare("SELECT value FROM settings WHERE key = ?");

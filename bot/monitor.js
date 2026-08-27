@@ -20,21 +20,33 @@ export const alertOnce = once;
 export const stopDist = (p) => Math.abs(p.entry - p.sl);
 
 /**
- * Лесенка: 20% позиции на каждой из пяти целей. После первой цели стоп
- * уходит в безубыток — ровно так считался бэктест, по которому выбраны
- * пороги входа.
+ * Лесенка. Раньше была зашита намертво: 20% позиции на каждой из пяти
+ * целей с шагом 0,5R. Теперь доли лежат в самой позиции, а расстояния
+ * выводятся из её целей — так защитная лесенка (половина на первой
+ * цели) и классическая считаются одним кодом. Позиция без долей —
+ * старая, для неё выходит ровно прежняя арифметика.
  */
-export function banked(tpHit) {
+const sharesOf = (p) => {
+  try { const a = JSON.parse(p.shares); if (Array.isArray(a) && a.length) return a; }
+  catch { /* старая позиция */ }
+  return [0.2, 0.2, 0.2, 0.2, 0.2];
+};
+export function banked(p, tpHit) {
+  const d = stopDist(p);
+  if (!d) return 0;
+  const sh = sharesOf(p), T = JSON.parse(p.targets);
   let s = 0;
-  for (let n = 1; n <= tpHit; n++) s += 0.2 * 0.5 * n;
+  for (let n = 0; n < Math.min(tpHit, T.length); n++)
+    s += sh[n] * Math.abs(T[n] - p.entry) / d;
   return s;
 }
 export function rAt(p, price) {
   const d = stopDist(p);
   if (!d) return 0;
-  const left = Math.max(0, 1 - 0.2 * p.tp_hit);
+  const sh = sharesOf(p);
+  const left = Math.max(0, 1 - sh.slice(0, p.tp_hit).reduce((a, b) => a + b, 0));
   const move = (p.side === "long" ? price - p.entry : p.entry - price) / d;
-  return banked(p.tp_hit) + left * move;
+  return banked(p, p.tp_hit) + left * move;
 }
 
 export function closePosition(p, price, reason) {
@@ -118,13 +130,13 @@ export async function monitorTick({ strategies, notify, focus }) {
       if (once(p.id, "target", `t${hit}`, "")) {
         events++;
         logEvent({ kind: "target", strategy: p.strategy, symbol: p.symbol,
-                   side: p.side, price, r: banked(hit), text: `цель ${hit}` });
+                   side: p.side, price, r: banked(p, hit), text: `цель ${hit}` });
         const more = hit < targets.length
           ? `Следующая цель ${fmtPrice(targets[hit])}`
           : "Все цели взяты";
         await notify(p.id,
           `🎯 <b>Цель ${hit}</b> · ${fmtPrice(targets[hit - 1])}\n` +
-          `${p.symbol} ${long ? "LONG" : "SHORT"} · зафиксировано <b>${rTxt(banked(hit))}</b>\n` +
+          `${p.symbol} ${long ? "LONG" : "SHORT"} · зафиксировано <b>${rTxt(banked(p, hit))}</b>\n` +
           (toBreakeven ? `Стоп переведён в безубыток ${fmtPrice(p.entry)}\n` : "") +
           `<i>${more}</i>`);
       }

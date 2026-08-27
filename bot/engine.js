@@ -14,9 +14,36 @@ import { refreshMarket, rejectSignal } from "./gate.js";
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 const insertSignal = db.prepare(
   "INSERT OR IGNORE INTO signals" +
-  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol,agree) " +
-  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?,?)"
+  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol,agree,shares) " +
+  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?,?,?)"
 );
+
+/**
+ * Защитная лесенка. Стратегии рисуют классическую геометрию — стоп по
+ * своей логике и пять целей с шагом 0,5R. Здесь она перестраивается:
+ * стоп в полтора раза дальше, первая цель на 0,15R с фиксацией половины
+ * позиции, дальние цели шире.
+ *
+ * Смысл: минус случается, когда цена не дошла до первой цели. Близкий
+ * якорь переводит сделку в безубыток почти сразу, а дальние цели
+ * сохраняют хвост прибыли. Замер на 765 сигналах с отбором: минусов 11%
+ * вместо 30%, средний R +0,066 против +0,127 — реже, но мельче; выбор
+ * за настройкой. Агрессивный якорь 0,10R давал 7%, но при плохом
+ * исполнении (комиссия 0,05% + проскальзывание 0,05%) разваливался до
+ * 19%, тогда как 0,15R деградирует до 14% — поэтому 0,15R.
+ */
+const ANCHOR_T = [0.15, 0.5, 1.0, 1.8, 2.8];
+const ANCHOR_SHARE = [0.5, 0.15, 0.15, 0.1, 0.1];
+function anchorGeometry(f) {
+  const long = f.side === "long";
+  const dist = Math.abs(f.entry - f.sl) * 1.5;
+  return {
+    ...f,
+    sl: long ? f.entry - dist : f.entry + dist,
+    targets: ANCHOR_T.map(x => long ? f.entry + x * dist : f.entry - x * dist),
+    shares: ANCHOR_SHARE,
+  };
+}
 
 /**
  * Средний дневной ход за год, 3 месяца и 2 недели.
@@ -160,6 +187,7 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
 
   // Отбор: стратегия сказала «вход есть», здесь решаем, показывать ли.
   // Отсев считается отдельно — молчание должно быть объяснимым.
+  const anchor = num("anchor") === 1;
   const gateOut = [];
   const passed = found.filter(f => {
     const why = rejectSignal(f, f.gateCandles, f.gateIndex);
@@ -171,7 +199,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
         (gateOut.length > 2 ? " и др." : ""));
 
   let sent = 0, updated = 0;
-  for (const f of passed) {
+  for (let f of passed) {
+    if (anchor) f = anchorGeometry(f);
     const held = open.get(f.symbol);
     if (held) {
       if (onUpdate && await onUpdate(f, held)) updated++;
@@ -182,7 +211,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
     const r = insertSignal.run(f.strategy, f.symbol, f.side, f.tf, f.entry, f.sl,
       JSON.stringify(f.targets), f.reason, now(), f.barTime,
       vol ? JSON.stringify(vol) : null,
-      f.agree ? JSON.stringify(f.agree) : null);
+      f.agree ? JSON.stringify(f.agree) : null,
+      f.shares ? JSON.stringify(f.shares) : null);
     if (!r.changes) continue;                       // уже был такой — не дублируем
     const id = Number(r.lastInsertRowid);
     f.vol = vol;

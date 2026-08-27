@@ -885,10 +885,10 @@ export async function onCallback(q) {
     const t = now();
     const r = db.prepare(
       "INSERT INTO positions(signal_id,chat_id,strategy,symbol,side,tf,entry,sl," +
-      "sl_current,targets,tp_hit,opened_at,status,msg_id) " +
-      "VALUES(?,?,?,?,?,?,?,?,?,?,0,?,'open',?)"
+      "sl_current,targets,shares,tp_hit,opened_at,status,msg_id) " +
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,0,?,'open',?)"
     ).run(id, chatId, sig.strategy, sig.symbol, sig.side, sig.tf,
-          sig.entry, sig.sl, sig.sl, sig.targets, t, q.message.message_id);
+          sig.entry, sig.sl, sig.sl, sig.targets, sig.shares ?? null, t, q.message.message_id);
     const posId = Number(r.lastInsertRowid);
 
     db.prepare("UPDATE signals SET status='taken' WHERE id=?").run(id);
