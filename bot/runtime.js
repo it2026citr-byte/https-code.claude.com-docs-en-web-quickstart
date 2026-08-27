@@ -34,6 +34,11 @@ export const PARAMS = {
   // 28%→23%→19%→13% убыточных при +0,161→+0,141→+0,113→+0,082R.
   be_at:       { g: "сделки", def: () => 50, opts: [50, 35, 25, 15],
                  title: "Безубыток на",         unit: "R" },
+  // Ноль — без предела. Замер: 99% сделок и так решаются за двое суток,
+  // средний R с пределом +0,076 против +0,080 без него — предел почти
+  // ничего не стоит, зато сигнал не висит неделями.
+  max_life_h: { g: "сделки", def: () => 48, opts: [24, 48, 72, 0],
+                title: "Срок жизни сделки",     unit: "ч" },
   top_pairs:   { g: "рынок", def: () => cfg.topByTurnover, opts: [50, 100, 200, 350, 500],
                  title: "Пар в работе, не более", unit: "" },
   min_turn_k:  { g: "рынок", def: () => cfg.minTurnoverUsd / 1000, opts: [1000, 500, 200, 100, 50],
@@ -96,6 +101,7 @@ export const fmtVal = (key) => {
   if (key === "tz") return `UTC+${v}`;
   if (key === "only_list") return v ? "только мой список" : "оборот + мой список";
   if (key === "leadlag_on") return v ? "включён" : "выключен";
+  if (key === "max_life_h") return v === 0 ? "без предела" : `${v} ч`;
   if (key === "f_btc" || key === "f_agree" || key === "f_trend")
     return v === 1 ? "да" : "нет";
   if (key === "ll_pump") return `от ${v}% за 2 часа`;
