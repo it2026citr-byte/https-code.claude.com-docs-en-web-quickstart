@@ -12,6 +12,7 @@ import * as ZN from "./zones.js";
 import { rejectReason, ready as tradableReady } from "./data/tradable.js";
 import { loadStrategies } from "./strategies/index.js";
 import { scanMarket } from "./engine.js";
+import { setStrategyCount } from "./gate.js";
 import { leadLag } from "./scanners.js";
 import { startLoops, startReports } from "./scheduler.js";
 import { fmtPrice, fmtPct, fmtAgo, fmtTime, startOfDayUtc } from "./format.js";
@@ -416,6 +417,8 @@ async function main() {
   ]});
 
   STRATEGIES = await loadStrategies();
+  // Отбору нужно знать, есть ли кому соглашаться.
+  setStrategyCount(STRATEGIES.length);
   // Обработчики команд живут отдельно и получают отсюда две вещи:
   // список стратегий и способ ответить в нитку сделки. Импортировать
   // их оттуда напрямую нельзя — вышло бы кольцо.
