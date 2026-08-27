@@ -14,6 +14,7 @@ export const GROUPS = {
   сделки:  "Ведение сделки",
   отчёты:  "Отчёты и время",
   отстающие: "Сканер отстающих",
+  отбор:     "Отбор сигналов",
 };
 
 export const PARAMS = {
@@ -62,6 +63,13 @@ export const PARAMS = {
   // разогнавшимся лидером. Час в вариантах давал бы ноль сигналов.
   ll_lag:     { g: "отстающие", def: () => 240, opts: [120, 240, 360, 480],
                 title: "Сдвиг не больше",    unit: "мин" },
+  // Три условия отбора. Замер и обоснование — в gate.js.
+  f_btc:      { g: "отбор", def: () => 1, opts: [0, 1],
+                title: "Только по ходу биткоина", unit: "" },
+  f_agree:    { g: "отбор", def: () => 1, opts: [0, 1],
+                title: "Нужно согласие стратегий", unit: "" },
+  f_trend:    { g: "отбор", def: () => 1, opts: [0, 1],
+                title: "Только по старшему тренду", unit: "" },
   ll_quiet:   { g: "отстающие", def: () => 35, opts: [20, 35, 50, 70],
                 title: "Ведомая прошла до",  unit: "% от скачка" },
 };
@@ -88,6 +96,8 @@ export const fmtVal = (key) => {
   if (key === "tz") return `UTC+${v}`;
   if (key === "only_list") return v ? "только мой список" : "оборот + мой список";
   if (key === "leadlag_on") return v ? "включён" : "выключен";
+  if (key === "f_btc" || key === "f_agree" || key === "f_trend")
+    return v === 1 ? "да" : "нет";
   if (key === "ll_pump") return `от ${v}% за 2 часа`;
   if (key === "ll_corr") return `${v}% и выше`;
   if (key === "ll_lag") return v >= 60 ? `до ${v / 60} ч` : `до ${v} мин`;

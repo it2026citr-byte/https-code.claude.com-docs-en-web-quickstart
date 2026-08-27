@@ -9,6 +9,7 @@ import { num } from "./runtime.js";
 import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
 import { rejectReason, ready as tradableReady } from "./data/tradable.js";
+import { refreshMarket, rejectSignal } from "./gate.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 const insertSignal = db.prepare(
@@ -67,6 +68,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   // Списки для отсева пар. Пока их нет, rejectReason отказывает всем,
   // поэтому тянуть их надо до отсева, а не после.
   await tradableReady();
+  // Погода по биткоину нужна отбору ниже: одно обращение на такт.
+  await refreshMarket();
 
   // Автоподбор фьючерсы уже отфильтровал, а монеты из моего списка —
   // нет: пару могли добавить давно или снять с фьючерсов после.
@@ -84,6 +87,7 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   await mapLimit(pairs, 6, async (p) => {
     const fired = [];       // сработавшие стратегии по этой паре
     const cond = [];        // условия всех стратегий, для показа близости
+    let lastCandles = null, lastIndex = 0;
 
     // Если под монету подобраны свои параметры — работаем ими.
     const tuned = paramsFor(p.symbol);
@@ -93,6 +97,7 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
       const c = await candles(p.symbol, tf, 300);
       if (c.length < 160) return;
       const i = c.length - 2;                       // последний закрытый бар
+      lastCandles = c; lastIndex = i;               // отбору нужен тот же ряд
       for (const base of strategies) {
         if (base.timeframe !== tf) continue;
         const own = tuned?.[base.id];
@@ -134,6 +139,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
 
       found.push({
         ...best,
+        gateCandles: lastCandles,
+        gateIndex: lastIndex,
         symbol: p.symbol,
         strategy: same.map(f => f.strategy).sort().join(" + "),
         parts: same.map(f => f.strategy),
@@ -151,8 +158,20 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   // приглашение перезайти, и уходит он другой дорогой.
   const open = new Map(openPositions().map(p => [p.symbol, p]));
 
+  // Отбор: стратегия сказала «вход есть», здесь решаем, показывать ли.
+  // Отсев считается отдельно — молчание должно быть объяснимым.
+  const gateOut = [];
+  const passed = found.filter(f => {
+    const why = rejectSignal(f, f.gateCandles, f.gateIndex);
+    if (why) { gateOut.push(`${f.symbol} ${f.side}: ${why}`); return false; }
+    return true;
+  });
+  if (gateOut.length)
+    log(`отбор отклонил ${gateOut.length}: ${gateOut.slice(0, 2).join("; ")}` +
+        (gateOut.length > 2 ? " и др." : ""));
+
   let sent = 0, updated = 0;
-  for (const f of found) {
+  for (const f of passed) {
     const held = open.get(f.symbol);
     if (held) {
       if (onUpdate && await onUpdate(f, held)) updated++;
@@ -174,7 +193,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   }
 
   return { pairs: pairs.length, candidates: found.length, signals: sent,
-           updates: updated, watching, symbols: pairs.map(p => p.symbol) };
+           updates: updated, watching, gated: gateOut.length,
+           symbols: pairs.map(p => p.symbol) };
 }
 
 export { TF_SEC };

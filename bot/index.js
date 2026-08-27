@@ -173,7 +173,7 @@ async function scanTick() {
   setSetting("universe_size", r.pairs);
   const watched = await onWatching(r.watching).catch(() => 0);
   const lag = await leadLagTick(r.symbols ?? []).catch(() => 0);
-  log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, выдано ${r.signals}, ` +
+  log(`скан: ${r.pairs} пар, кандидатов ${r.candidates}, отбор снял ${r.gated ?? 0}, выдано ${r.signals}, ` +
       `правок по открытым ${r.updates ?? 0}, на прицеле ${watched}, ` +
       `отстающих ${lag}, ${((Date.now() - t0) / 1000).toFixed(1)}с`);
 }
