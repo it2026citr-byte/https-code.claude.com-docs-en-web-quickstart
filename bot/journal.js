@@ -139,8 +139,9 @@ export function signalCard(s) {
       volBlock(s.vol) + `  <i>${s.strategy} · ${TF_RU[s.tf] ?? s.tf}</i>`,
     `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)`,
     `Цели ${s.targets.map(fmtPrice).join(" · ")}`,
+    s.figuresText ? `Фигура: ${s.figuresText}` : null,
     `<i>${s.reason}</i>`,
-  ].join("\n") + agreeBlock(s.agree);
+  ].filter(Boolean).join("\n") + agreeBlock(s.agree);
 }
 
 export function digest(rows, title) {

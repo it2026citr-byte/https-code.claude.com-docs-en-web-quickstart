@@ -80,6 +80,8 @@ export const PARAMS = {
                 title: "Нужно согласие стратегий", unit: "" },
   f_trend:    { g: "отбор", def: () => 1, opts: [0, 1],
                 title: "Только по старшему тренду", unit: "" },
+  f_figure:   { g: "отбор", def: () => 1, opts: [0, 1],
+                title: "Нужна фигура за вход",  unit: "" },
   ll_quiet:   { g: "отстающие", def: () => 35, opts: [20, 35, 50, 70],
                 title: "Ведомая прошла до",  unit: "% от скачка" },
 };
@@ -108,7 +110,7 @@ export const fmtVal = (key) => {
   if (key === "leadlag_on") return v ? "включён" : "выключен";
   if (key === "anchor") return v === 1 ? "да" : "классическая";
   if (key === "max_life_h") return v === 0 ? "без предела" : `${v} ч`;
-  if (key === "f_btc" || key === "f_agree" || key === "f_trend")
+  if (key === "f_btc" || key === "f_agree" || key === "f_trend" || key === "f_figure")
     return v === 1 ? "да" : "нет";
   if (key === "ll_pump") return `от ${v}% за 2 часа`;
   if (key === "ll_corr") return `${v}% и выше`;

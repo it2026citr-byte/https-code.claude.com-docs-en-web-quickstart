@@ -10,6 +10,7 @@ import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
 import { rejectReason, ready as tradableReady } from "./data/tradable.js";
 import { refreshMarket, rejectSignal } from "./gate.js";
+import { detect as detectFigures, figuresLine } from "./patterns.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 const insertSignal = db.prepare(
@@ -164,8 +165,14 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
         };
       }).sort((a, b) => (b.hit / b.all) - (a.hit / a.all));
 
+      // Фигура графика на тех же свечах, что видела стратегия.
+      // Считается один раз на сигнал: детектор дешёвый, но не бесплатный.
+      let figures = [];
+      try { figures = detectFigures(lastCandles, lastIndex); } catch { /* без фигур */ }
+
       found.push({
         ...best,
+        figures,
         gateCandles: lastCandles,
         gateIndex: lastIndex,
         symbol: p.symbol,
@@ -201,6 +208,7 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   let sent = 0, updated = 0;
   for (let f of passed) {
     if (anchor) f = anchorGeometry(f);
+    f.figuresText = figuresLine(f.figures, f.side);
     const held = open.get(f.symbol);
     if (held) {
       if (onUpdate && await onUpdate(f, held)) updated++;
