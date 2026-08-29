@@ -9,7 +9,7 @@ import { num } from "./runtime.js";
 import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
 import { rejectReason, ready as tradableReady } from "./data/tradable.js";
-import { refreshMarket, rejectSignal } from "./gate.js";
+import { refreshMarket, rejectSignal, rejectMicro } from "./gate.js";
 import { detect as detectFigures, figuresLine, strongFor } from "./patterns.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
@@ -212,6 +212,11 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   let sent = 0, updated = 0;
   const pullShare = num("entry_pull") / 100;
   for (let f of passed) {
+    // Микроструктура — после остального отбора: одна загрузка
+    // 15-минуток на выжившего, а не на каждого кандидата.
+    const microWhy = await rejectMicro(f);
+    if (microWhy) { gateOut.push(`${f.symbol} ${f.side}: ${microWhy}`); continue; }
+
     if (anchor) f = anchorGeometry(f);
 
     // Откат входа: вся геометрия (вход, стоп, цели) сдвигается на долю
