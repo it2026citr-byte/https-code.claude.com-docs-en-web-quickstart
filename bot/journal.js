@@ -146,6 +146,7 @@ export function signalCard(s) {
   const pct = Math.abs(s.sl - s.entry) / s.entry * 100;
   const when = signalTime(s);
   return [
+    s.sniper ? "🎯 <b>СНАЙПЕРСКИЙ</b> — сильная фигура за вход" : null,
     `${long ? "📈" : "📉"} <b>${long ? "LONG" : "SHORT"}</b> ${s.symbol}` +
       volBlock(s.vol) + `  <i>${s.strategy} · ${TF_RU[s.tf] ?? s.tf}</i>`,
     `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)` +

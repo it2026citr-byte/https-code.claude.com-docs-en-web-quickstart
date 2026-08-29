@@ -10,7 +10,7 @@ import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
 import { rejectReason, ready as tradableReady } from "./data/tradable.js";
 import { refreshMarket, rejectSignal } from "./gate.js";
-import { detect as detectFigures, figuresLine } from "./patterns.js";
+import { detect as detectFigures, figuresLine, strongFor } from "./patterns.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 const insertSignal = db.prepare(
@@ -209,6 +209,9 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
   for (let f of passed) {
     if (anchor) f = anchorGeometry(f);
     f.figuresText = figuresLine(f.figures, f.side);
+    // Снайперская пометка живёт на сигнале, а не в отборе: в положении
+    // «вместе с основными» ничего не режется, но жирный сигнал видно.
+    f.sniper = num("f_sniper") >= 1 && strongFor(f.figures, f.side);
     const held = open.get(f.symbol);
     if (held) {
       if (onUpdate && await onUpdate(f, held)) updated++;
