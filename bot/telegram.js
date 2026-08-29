@@ -28,11 +28,13 @@ export const esc = (s) => String(s)
 
 /**
  * Ошибки, после которых повтор безопасен: обрыв соединения, лимит
- * запросов (429 = «не принял»), шлюз не достучался до API (502/503).
- * Таймаута и «не JSON» здесь нет сознательно: и там и там сообщение
- * могло дойти — ответ просто не дочитался, — и повтор дал бы дубль.
+ * запросов (429 = «не принял») и шлюз, не передавший запрос к API, —
+ * только 502/503, у них запрос гарантированно не принят. Таймаут,
+ * «не JSON (HTTP 200)» и 504 сознательно НЕ повторяются: там
+ * сообщение могло дойти, а не дочитался только ответ — повтор дал
+ * бы дубль.
  */
-const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Service Unavailable|не JSON \(HTTP 5\d\d\)/i;
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Service Unavailable|не JSON \(HTTP 50[23]\)/i;
 
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
@@ -165,8 +167,10 @@ async function apiUpload(method, field, blob, filename, { chat_id, caption }) {
  * подпись или лимит запросов повтором байтами не лечатся — туда
  * не ходим, только зря удвоим трафик под ограничителем.
  */
-// «photo» сюда нельзя: оно есть в каждом сообщении («Telegram sendPhoto: …»).
-const URL_FETCH_FAIL = /url|http|webpage|content|identifier/i;
+// Шаблоны только ЦЕЛЫМИ фразами из ответов Telegram: короткие
+// подстроки уже дважды ловили чужое («photo» есть в каждом сообщении,
+// «http» — в «не JSON (HTTP …)»).
+const URL_FETCH_FAIL = /HTTP URL|web ?page|wrong file identifier/i;
 
 export async function sendPhoto(chatId, url, caption = "") {
   try {
