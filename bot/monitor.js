@@ -23,21 +23,40 @@ const once = (posId, level, reason, text) =>
  */
 const stash = db.prepare(
   "UPDATE alerts SET msg=?, kb=?, sent=0 WHERE position_id=? AND level=? AND reason=?");
+const pickUnsent = db.prepare(
+  "SELECT * FROM alerts WHERE sent=0 AND tries<10 ORDER BY id LIMIT 3");
+const markSent = db.prepare("UPDATE alerts SET sent=1 WHERE id=?");
+const markTried = db.prepare("UPDATE alerts SET tries=tries+1 WHERE id=?");
+
 async function notifyOnce(notify, posId, level, reason, msg, kb = null) {
   const m = await notify(posId, msg, kb);
-  if (!m) stash.run(msg, kb ? JSON.stringify(kb) : null, posId, level, reason);
+  // Жёлтая тревога живёт, пока формируется свеча: досылать её после
+  // закрытия бара поздно и вредно — не сохраняем. Не дошла — придёт
+  // красная, у той страховка есть.
+  if (!m && level !== "yellow")
+    stash.run(msg, kb ? JSON.stringify(kb) : null, posId, level, reason);
   return m;
 }
+
+/**
+ * Порция из трёх на такт, чтобы досылка не съедала время присмотра
+ * за живыми стопами; флаг — от параллельного такта (сорванный по
+ * дедлайну продолжает жить и мог бы дослать то же самое вторым разом).
+ */
+let flushing = false;
 async function flushUnsent(notify) {
-  const rows = db.prepare("SELECT * FROM alerts WHERE sent=0 AND tries<10").all();
-  for (const a of rows) {
-    let kb = null;
-    try { kb = a.kb ? JSON.parse(a.kb) : null; } catch { /* без кнопок */ }
-    const m = await notify(a.position_id, a.msg, kb);
-    db.prepare(m ? "UPDATE alerts SET sent=1 WHERE id=?"
-                 : "UPDATE alerts SET tries=tries+1 WHERE id=?").run(a.id);
-    if (m) log(`тревога дослана: позиция ${a.position_id}, ${a.level}/${a.reason}`);
-  }
+  if (flushing) return;
+  flushing = true;
+  try {
+    for (const a of pickUnsent.all()) {
+      let kb = null;
+      try { kb = a.kb ? JSON.parse(a.kb) : null; } catch { /* без кнопок */ }
+      const m = await notify(a.position_id,
+        `⏱ <i>Досылка — сообщение не ушло вовремя.</i>\n${a.msg}`, kb);
+      (m ? markSent : markTried).run(a.id);
+      if (m) log(`тревога дослана: позиция ${a.position_id}, ${a.level}/${a.reason}`);
+    }
+  } finally { flushing = false; }
 }
 
 /** То же гашение повторов — для сообщений вне монитора. */
@@ -174,8 +193,8 @@ export async function monitorTick({ strategies, notify, focus }) {
 
       if (hit >= targets.length) {
         const r = closePosition(p, targets[targets.length - 1], "target");
-        once(p.id, "info", "закрыта", "");
-        await notifyOnce(notify, p.id, "info", "закрыта",
+        if (once(p.id, "info", "закрыта", ""))
+          await notifyOnce(notify, p.id, "info", "закрыта",
           `🟢 <b>Закрыта по последней цели</b>\n` +
           `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
           `<i>${goldenTime(now())}</i>`);
@@ -188,8 +207,8 @@ export async function monitorTick({ strategies, notify, focus }) {
     if (long ? price <= sl : price >= sl) {
       const be = p.tp_hit > 0 || p.be_armed === 1;
       const r = closePosition(p, sl, "stop");
-      once(p.id, "info", "закрыта", "");
-      await notifyOnce(notify, p.id, "info", "закрыта",
+      if (once(p.id, "info", "закрыта", ""))
+        await notifyOnce(notify, p.id, "info", "закрыта",
         `${be ? "⚪️" : "🔴"} <b>${be ? "Стоп в безубытке" : "Стоп"}</b> · ${fmtPrice(sl)}\n` +
         `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
         `<i>${goldenTime(now())}</i>`);

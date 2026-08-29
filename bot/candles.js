@@ -78,9 +78,12 @@ export async function candles(symbol, tf, limit = 300) {
   // общий, и короткая загрузка одного звонящего заставила бы соседа
   // перекачивать всё заново.
   const FULL = Math.max(limit, 300);
-  if (!hit || hit.arr.length < limit * 0.8) {
+  // short: биржа отдала всё, что у неё есть, — монета моложе limit.
+  // Без пометки короткий ряд вечно проваливал бы проверку «кеш мал»
+  // и перекачивался бы целиком на каждом вызове.
+  if (!hit || (hit.arr.length < limit * 0.8 && !hit.short)) {
     const arr = await fetchKlines(symbol, tf, FULL);
-    cache.set(key, { arr, at: Date.now() });
+    cache.set(key, { arr, at: Date.now(), short: arr.length < FULL });
     return arr.slice(-limit);
   }
   hit.at = Date.now();

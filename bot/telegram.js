@@ -23,8 +23,13 @@ export async function api(method, payload = {}) {
 export const esc = (s) => String(s)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
-/** Ошибки, при которых запрос заведомо не дошёл до Telegram. */
-const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE/i;
+/**
+ * Ошибки, после которых повтор безопасен и полезен: обрыв соединения
+ * (запрос не дошёл), лимит запросов (Telegram просит подождать) и
+ * ответы шлюза 5xx («не JSON» — это они). Таймаута здесь нет
+ * сознательно: при нём сообщение могло дойти, повтор дал бы дубль.
+ */
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Internal Server|не JSON/i;
 
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
