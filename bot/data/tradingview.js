@@ -8,6 +8,7 @@ const URL = "https://scanner.tradingview.com/crypto/scan";
 // вызвал бы предзапрос CORS. Тело при этом разбирается как JSON.
 async function scan(body) {
   const res = await fetch(URL, {
+    signal: AbortSignal.timeout(20_000),
     method: "POST",
     headers: { "Content-Type": "text/plain;charset=UTF-8" },
     body: JSON.stringify(body),

@@ -123,7 +123,7 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
     for (const tf of tfs) {
       // Через кеш: первый обход тянет по 300 свечей, дальше только хвост.
       const c = await candles(p.symbol, tf, 300);
-      if (c.length < 160) return;
+      if (c.length < 160) continue;      // короткий ряд ОДНОГО tf не топит остальные
       const i = c.length - 2;                       // последний закрытый бар
       lastCandles = c; lastIndex = i;               // отбору нужен тот же ряд
       for (const base of strategies) {
@@ -215,7 +215,11 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
     // Микроструктура — после остального отбора: одна загрузка
     // 15-минуток на выжившего, а не на каждого кандидата.
     const microWhy = await rejectMicro(f);
-    if (microWhy) { gateOut.push(`${f.symbol} ${f.side}: ${microWhy}`); continue; }
+    if (microWhy) {
+      gateOut.push(`${f.symbol} ${f.side}: ${microWhy}`);
+      log(`отбор отклонил: ${f.symbol} ${f.side}: ${microWhy}`);
+      continue;
+    }
 
     if (anchor) f = anchorGeometry(f);
 
@@ -247,12 +251,15 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
       continue;
     }
     if (cfg.maxSignalsPerScan && sent >= cfg.maxSignalsPerScan) break;
+    // Слепок может не собраться (нет минуток) — тогда в колонке честный
+    // NULL, а не строка "null": счётчик напоминания меряет настоящие.
+    const sn = await sonarSnapshot(f.symbol, f.side);
     const r = insertSignal.run(f.strategy, f.symbol, f.side, f.tf, f.entry, f.sl,
       JSON.stringify(f.targets), f.reason, now(), f.barTime,
       f.vol ? JSON.stringify(f.vol) : null,
       f.agree ? JSON.stringify(f.agree) : null,
       f.shares ? JSON.stringify(f.shares) : null,
-      JSON.stringify(await sonarSnapshot(f.symbol, f.side)));
+      sn ? JSON.stringify(sn) : null);
     if (!r.changes) continue;                       // уже был такой — не дублируем
     const id = Number(r.lastInsertRowid);
     logEvent({ kind: "signal", strategy: f.strategy, symbol: f.symbol,

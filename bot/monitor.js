@@ -14,6 +14,19 @@ const insAlert = db.prepare(
 const once = (posId, level, reason, text) =>
   insAlert.run(posId, level, reason, text ?? "", now()).changes > 0;
 
+/**
+ * Откат гашения. Ключ в alerts ставится ДО отправки — иначе гонка,
+ * — но если Telegram в этот момент лежал, тревога пропала бы навсегда:
+ * ключ есть, сообщения нет. Поэтому неотправленное гашение снимается,
+ * и следующий такт пробует снова.
+ */
+const undoOnce = db.prepare(
+  "DELETE FROM alerts WHERE position_id=? AND level=? AND reason=?");
+const confirm = (sent, posId, level, reason) => {
+  if (!sent) undoOnce.run(posId, level, reason);
+  return sent;
+};
+
 /** То же гашение повторов — для сообщений вне монитора. */
 export const alertOnce = once;
 
@@ -107,10 +120,10 @@ export async function monitorTick({ strategies, notify, focus }) {
           events++;
           logEvent({ kind: "note", strategy: p.strategy, symbol: p.symbol,
                      side: p.side, price, text: "стоп в безубытке" });
-          await notify(p.id,
+          confirm(await notify(p.id,
             `⚪️ <b>Стоп в безубытке</b> · ${fmtPrice(p.entry)}\n` +
             `${p.symbol} ${long ? "LONG" : "SHORT"} · прошли ${beAt.toFixed(2)}R в свою сторону\n` +
-            `<i>Дальше сделка не может кончиться убытком.</i>`);
+            `<i>Дальше сделка не может кончиться убытком.</i>`), p.id, "info", "breakeven");
         }
       }
     }
@@ -134,11 +147,11 @@ export async function monitorTick({ strategies, notify, focus }) {
         const more = hit < targets.length
           ? `Следующая цель ${fmtPrice(targets[hit])}`
           : "Все цели взяты";
-        await notify(p.id,
+        confirm(await notify(p.id,
           `🎯 <b>Цель ${hit}</b> · ${fmtPrice(targets[hit - 1])}\n` +
           `${p.symbol} ${long ? "LONG" : "SHORT"} · зафиксировано <b>${rTxt(banked(p, hit))}</b>\n` +
           (toBreakeven ? `Стоп переведён в безубыток ${fmtPrice(p.entry)}\n` : "") +
-          `<i>${more}</i>`);
+          `<i>${more}</i>`), p.id, "target", `t${hit}`);
       }
 
       if (hit >= targets.length) {
@@ -181,14 +194,14 @@ export async function monitorTick({ strategies, notify, focus }) {
         logEvent({ kind: "note", strategy: p.strategy, symbol: p.symbol,
                    side: p.side, price, r: rAt(p, price),
                    text: `прошло ${lifeH} ч, сделка не отработала` });
-        await notify(p.id,
+        confirm(await notify(p.id,
           `⏳ <b>Срок вышел</b> · ${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
           `Прошло ${fmtAgo(now() - p.opened_at)}, взято целей ${p.tp_hit} из ${targets.length}.\n` +
           `Цена ${fmtPrice(price)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n\n` +
           `<i>Идея была на двое суток. Дальше сделка держится не на посылке, ` +
           `по которой входили, а на надежде.</i>`,
           [[{ text: "✅ Вышел", callback_data: `exit:${p.id}` },
-            { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]);
+            { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]), p.id, "info", "срок");
       }
     }
 
@@ -226,14 +239,14 @@ export async function monitorTick({ strategies, notify, focus }) {
         events++;
         logEvent({ kind: "broken", strategy: p.strategy, symbol: p.symbol,
                    side: p.side, price, r: rAt(p, price), text: badText(bad) });
-        await notify(p.id,
+        confirm(await notify(p.id,
           `🔴 <b>ВЫХОД — СТРАТЕГИЯ СЛОМАНА</b>\n` +
           `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
           `${badHtml(bad)}\n\n` +
           `Цена ${fmtPrice(price)} · стоп ${fmtPrice(sl)} · сейчас <b>${rTxt(rAt(p, price))}</b>\n` +
           `<i>Подтверждено на закрытии бара. Выходи, не дожидаясь стопа.</i>`,
           [[{ text: "✅ Вышел", callback_data: `exit:${p.id}` },
-            { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]);
+            { text: "⏳ Остаюсь", callback_data: `stay:${p.id}` }]]), p.id, "red", bad.reason);
         continue;
       }
     }
@@ -248,7 +261,7 @@ export async function monitorTick({ strategies, notify, focus }) {
     const left = Math.max(0, (Math.floor(now() / step) * step + step) - now());
     logEvent({ kind: "note", strategy: p.strategy, symbol: p.symbol, side: p.side,
                price, text: `жёлтая тревога: ${badText(early)}` });
-    await notify(p.id,
+    confirm(await notify(p.id,
       `🟡 <b>ТРЕВОГА — условие выхода выполнено</b>\n` +
       `${p.symbol} ${long ? "LONG" : "SHORT"}\n\n` +
       `${badHtml(early)}\n\n` +
@@ -256,7 +269,7 @@ export async function monitorTick({ strategies, notify, focus }) {
       `<i>Свеча ещё не закрылась, до закрытия ${fmtAgo(left)}. ` +
       `Успеет отыграть — тревога снимется, нет — придёт красная.</i>`,
       [[{ text: "✅ Вышел заранее", callback_data: `exit:${p.id}` },
-        { text: "⏳ Жду закрытия", callback_data: `stay:${p.id}` }]]);
+        { text: "⏳ Жду закрытия", callback_data: `stay:${p.id}` }]]), p.id, "yellow", early.reason);
   }
 
   return { checked: pos.length, events };

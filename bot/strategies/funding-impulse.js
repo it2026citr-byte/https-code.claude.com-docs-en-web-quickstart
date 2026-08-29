@@ -155,11 +155,16 @@ export function make(over = {}) {
   invalidated(c, x, i, pos) {
     // Срок жизни теперь общий для всех стратегий и проверяется в monitor.js.
     // Своя проверка здесь давала бы второе сообщение о том же.
+    // Форма ответа — как у всех: { reason, label, detail }. Монитор
+    // печатает label и detail; поле text он не знает, и с ним тревога
+    // приходила пользователю как «undefined» — поймано аудитом 30.08.
     const e = x.ema[i];
     if (e != null && c[i].c < e)
-      return { reason: "тренд", text: "цена ушла под EMA50 — импульса больше нет" };
+      return { reason: "тренд", label: "Импульс угас",
+               detail: "цена ушла под EMA50" };
     if (x.rate != null && x.rate < 0)
-      return { reason: "ставка", text: `ставка ушла в минус (${x.rate.toFixed(3)}%)` };
+      return { reason: "ставка", label: "Ставка развернулась",
+               detail: `ставка финансирования ушла в минус (${x.rate.toFixed(3)}%)` };
     return null;
   },
 };

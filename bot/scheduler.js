@@ -95,18 +95,22 @@ export function startReports({ onDaily, onMonthly }) {
         const month = d.toISOString().slice(0, 7);
         const past = d.getUTCHours() >= reportHourUtc();
 
-        // Дневная сводка за сегодня — после назначенного часа, один раз в день.
+        // Дневная сводка за сегодня — после назначенного часа, один раз
+        // в день. Отметка ставится ПОСЛЕ удачной сборки: если отчёт
+        // сорвался, следующая минута попробует снова, а не потеряет
+        // день. Дублей это не создаёт: сама отправка ошибок не бросает,
+        // бросить может только сборка — до первого сообщения.
         if (past && getSetting("last_daily") !== day) {
-          setSetting("last_daily", day);
           await onDaily(day);
+          setSetting("last_daily", day);
         }
 
         // Месячный итог — первого числа, за прошлый месяц.
         const prev = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 0))
           .toISOString().slice(0, 7);
         if (d.getUTCDate() === 1 && past && getSetting("last_monthly") !== month) {
-          setSetting("last_monthly", month);
           await onMonthly(prev);
+          setSetting("last_monthly", month);
         }
       } catch (e) { log("отчёт не собрался:", e.message); }
       await sleep(60_000);

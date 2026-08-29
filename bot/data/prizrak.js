@@ -19,7 +19,8 @@ const DASH = "[-–—−]";
 /** Одна страница канала. */
 async function page(before) {
   const url = `https://t.me/s/${CH}` + (before ? `?before=${before}` : "");
-  const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  const r = await fetch(url, { headers: { "User-Agent": "Mozilla/5.0" },
+                          signal: AbortSignal.timeout(20_000) });
   if (!r.ok) throw new Error(`канал ответил ${r.status}`);
   return r.text();
 }

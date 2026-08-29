@@ -4,10 +4,16 @@ import { getSetting, setSetting, activeUsers } from "./db.js";
 const API = `https://api.telegram.org/bot${cfg.token}`;
 
 export async function api(method, payload = {}) {
+  // Таймаут обязателен: опрос апдейтов строго последовательный, и одно
+  // повисшее соединение оставило бы бота глухим к командам на минуты.
+  // Долгому опросу (getUpdates ждёт до payload.timeout секунд) даём
+  // его срок плюс запас; остальным вызовам хватает тридцати секунд.
+  const tmoMs = (Number(payload.timeout) || 0) * 1000 + 30_000;
   const res = await fetch(`${API}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(tmoMs),
   });
   const j = await res.json().catch(() => ({ ok: false, description: "не JSON" }));
   if (!j.ok) throw new Error(`Telegram ${method}: ${j.description || res.status}`);
@@ -34,8 +40,14 @@ export async function send(chatId, text, keyboard = null, replyTo = null) {
       log("ответ на", replyTo, "не прошёл, шлю отдельно:", e.message);
       return send(chatId, text, keyboard, null);
     }
-    log("не отправилось в", chatId, "—", e.message);
-    return null;
+    // Один повтор через две секунды: сетевой чих не должен стоить
+    // сообщения. Постоянные отказы (блокировка, кривая разметка)
+    // повтор не вылечит — тогда честно сдаёмся и возвращаем null,
+    // по которому монитор откатит гашение тревоги.
+    log("не отправилось, повторю через 2 с:", e.message);
+    await new Promise(r => setTimeout(r, 2000));
+    try { return await api("sendMessage", payload); }
+    catch (e2) { log("не отправилось в", chatId, "—", e2.message); return null; }
   }
 }
 
@@ -113,27 +125,51 @@ export async function editLong(chatId, msgId, text, keyboard = null) {
  * только когда не вышло и это: потерять разбор хуже, чем показать
  * его без картинки.
  */
+/** Загрузка байтами: общий низ для фото и файлов. */
+async function apiUpload(method, field, blob, filename, { chat_id, caption }) {
+  const fd = new FormData();
+  fd.append("chat_id", String(chat_id));
+  if (caption) { fd.append("caption", caption); fd.append("parse_mode", "HTML"); }
+  fd.append(field, blob, filename);
+  const res = await fetch(`${API}/${method}`,
+    { method: "POST", body: fd, signal: AbortSignal.timeout(60_000) });
+  const j = await res.json().catch(() => ({ ok: false, description: "не JSON" }));
+  if (!j.ok) throw new Error(j.description);
+  return j.result;
+}
+
+/**
+ * Отказы Telegram, при которых есть смысл скачать картинку самим:
+ * его серверы не смогли забрать URL. Заблокированный бот, кривая
+ * подпись или лимит запросов повтором байтами не лечатся — туда
+ * не ходим, только зря удвоим трафик под ограничителем.
+ */
+// «photo» сюда нельзя: оно есть в каждом сообщении («Telegram sendPhoto: …»).
+const URL_FETCH_FAIL = /url|http|webpage|content|identifier/i;
+
 export async function sendPhoto(chatId, url, caption = "") {
   try {
     return await api("sendPhoto", {
       chat_id: chatId, photo: url, caption, parse_mode: "HTML",
     });
   } catch (e) {
+    if (!URL_FETCH_FAIL.test(e.message)) {
+      log("картинка не отправилась:", e.message);
+      return send(chatId, caption + `\n<i>(картинка не загрузилась)</i>`);
+    }
     log("картинка по ссылке не ушла, качаю сам:", e.message);
   }
   try {
-    const r = await fetch(url);
+    // Телефонный процесс маленький: и время, и размер ограничены жёстко.
+    const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!r.ok) throw new Error(`HTTP ${r.status} при скачивании`);
-    const buf = Buffer.from(await r.arrayBuffer());
-    log(`картинку скачал сам: ${buf.length} байт`);
-    const fd = new FormData();
-    fd.append("chat_id", String(chatId));
-    if (caption) { fd.append("caption", caption); fd.append("parse_mode", "HTML"); }
-    fd.append("photo", new Blob([buf]), "chart.jpg");
-    const res = await fetch(`${API}/sendPhoto`, { method: "POST", body: fd });
-    const j = await res.json();
-    if (!j.ok) throw new Error(j.description);
-    return j.result;
+    const len = Number(r.headers.get("content-length") || 0);
+    if (len > 10 * 1024 * 1024) throw new Error(`слишком большая: ${len} байт`);
+    const blob = await r.blob();
+    if (blob.size > 10 * 1024 * 1024) throw new Error(`слишком большая: ${blob.size} байт`);
+    log(`картинку скачал сам: ${blob.size} байт`);
+    return await apiUpload("sendPhoto", "photo", blob, "chart.jpg",
+                           { chat_id: chatId, caption });
   } catch (e) {
     log("картинка не отправилась:", e.message);
     return send(chatId, caption + `\n<i>(картинка не загрузилась)</i>`);
@@ -146,14 +182,8 @@ export async function sendDoc(chatId, path, caption = "") {
   const { basename } = await import("node:path");
   try {
     const buf = await readFile(path);
-    const fd = new FormData();
-    fd.append("chat_id", String(chatId));
-    if (caption) { fd.append("caption", caption); fd.append("parse_mode", "HTML"); }
-    fd.append("document", new Blob([buf]), basename(path));
-    const res = await fetch(`${API}/sendDocument`, { method: "POST", body: fd });
-    const j = await res.json();
-    if (!j.ok) throw new Error(j.description);
-    return j.result;
+    return await apiUpload("sendDocument", "document", new Blob([buf]),
+                           basename(path), { chat_id: chatId, caption });
   } catch (e) {
     log("файл не ушёл:", e.message);
     return null;

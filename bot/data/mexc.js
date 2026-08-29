@@ -12,7 +12,7 @@ export async function fetchKlines(symbol, tf, limit = 300) {
   const iv = TF_MAP[tf];
   if (!iv) throw new Error(`неизвестный таймфрейм ${tf}`);
   const url = `${BASE}/klines?symbol=${symbol}&interval=${iv}&limit=${limit}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`MEXC ${symbol} ${tf}: HTTP ${res.status}`);
   const raw = await res.json();
   if (!Array.isArray(raw)) throw new Error(`MEXC ${symbol}: неожиданный ответ`);
@@ -40,7 +40,7 @@ export async function deepHistory(symbol, tf, want) {
     const start = end - 500 * sec * 1000;
     const url = `${BASE}/klines?symbol=${symbol}&interval=${iv}` +
                 `&startTime=${start}&endTime=${end}&limit=500`;
-    const res = await fetch(url);
+    const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
     if (!res.ok) break;
     const raw = await res.json();
     if (!Array.isArray(raw) || !raw.length) break;
@@ -61,7 +61,7 @@ export async function deepHistory(symbol, tf, want) {
 /** Есть ли такая пара на бирже. */
 export async function pairExists(symbol) {
   try {
-    const r = await fetch(`${BASE}/ticker/price?symbol=${symbol}`);
+    const r = await fetch(`${BASE}/ticker/price?symbol=${symbol}`, { signal: AbortSignal.timeout(20_000) });
     if (!r.ok) return false;
     return Boolean((await r.json()).price);
   } catch { return false; }
@@ -69,7 +69,7 @@ export async function pairExists(symbol) {
 
 /** Последняя цена по паре. */
 export async function lastPrice(symbol) {
-  const res = await fetch(`${BASE}/ticker/price?symbol=${symbol}`);
+  const res = await fetch(`${BASE}/ticker/price?symbol=${symbol}`, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`MEXC цена ${symbol}: HTTP ${res.status}`);
   return +(await res.json()).price;
 }
@@ -100,7 +100,7 @@ export async function prices(symbols) {
     return out;
   }
 
-  const res = await fetch(`${BASE}/ticker/price`);
+  const res = await fetch(`${BASE}/ticker/price`, { signal: AbortSignal.timeout(20_000) });
   if (!res.ok) throw new Error(`MEXC цены: HTTP ${res.status}`);
   const want = new Set(list);
   for (const r of await res.json()) if (want.has(r.symbol)) out[r.symbol] = +r.price;

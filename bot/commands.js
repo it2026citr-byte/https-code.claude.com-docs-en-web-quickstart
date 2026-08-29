@@ -17,7 +17,7 @@ import {
   goldenTime, summaryLine, monthReport, exportMonthCsv, exportMonthLog, availableMonths,
 } from "./journal.js";
 import { ACCESS_KB, rTxt, settingsView, settingsKeyboard,
-         analysisText, tuneText, zonesText, HELP } from "./texts.js";
+         analysisText, tuneText, zonesText, HELP, sig, prof } from "./texts.js";
 import * as WL from "./watchlist.js";
 import * as ZN from "./zones.js";
 import * as PZ from "./data/prizrak.js";

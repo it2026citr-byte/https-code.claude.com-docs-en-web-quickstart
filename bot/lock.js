@@ -41,12 +41,29 @@ export function acquireLock() {
       writeSync(fd, stamp());
       closeSync(fd);
 
+      // Пульс сперва проверяет, что замок всё ещё наш. Android умеет
+      // замораживать процесс дольше минуты (doze, phantom freeze);
+      // проснувшись, старая копия обнаружила бы, что запасная уже
+      // забрала замок, — и молча писала бы поверх, оставив ДВЕ живые
+      // копии навсегда. Правильный выход у проснувшейся один: умереть.
       const beat = setInterval(() => {
-        try { writeFileSync(LOCK, stamp()); } catch { /* переживём */ }
+        try {
+          const cur = read();
+          if (cur && cur.pid !== process.pid && alive(cur.pid)) {
+            log(`замок перехвачен копией PID ${cur.pid} — эта копия лишняя, выхожу`);
+            process.exit(0);                     // сторож не поднимет вторую: замок занят
+          }
+          writeFileSync(LOCK, stamp());
+        } catch { /* переживём */ }
       }, BEAT_MS);
       beat.unref?.();
 
-      const release = () => { try { unlinkSync(LOCK); } catch { /* уже нет */ } };
+      // Снимаем только СВОЙ замок: если его уже перехватила другая
+      // копия, unlink снёс бы чужой — и открыл дорогу третьей.
+      const release = () => {
+        try { if (read()?.pid === process.pid) unlinkSync(LOCK); }
+        catch { /* уже нет */ }
+      };
       process.on("exit", release);
       for (const s of ["SIGINT", "SIGTERM"])
         process.on(s, () => { release(); process.exit(0); });

@@ -32,6 +32,7 @@ const URL = "https://contract.mexc.com/api/v1/contract/ticker";
 export async function futuresGet(url = URL) {
   try {
     const r = await fetch(url, {
+      signal: AbortSignal.timeout(20_000),
       headers: { "User-Agent": "Mozilla/5.0", Accept: "application/json" },
     });
     if (r.ok) return await r.text();

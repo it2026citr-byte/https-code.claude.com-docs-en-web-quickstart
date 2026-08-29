@@ -1,10 +1,10 @@
 import { log, codeVersion } from "./config.js";
 import { acquireLock } from "./lock.js";
 import { db, now, getSetting, setSetting, openPositions, upsertUser, setRole } from "./db.js";
-import { api, send, broadcast, broadcastDoc, startPolling } from "./telegram.js";
+import { api, send, broadcast, broadcastDoc, startPolling, esc } from "./telegram.js";
 import { topPairs } from "./data/tradingview.js";
-import { prices, deepHistory } from "./data/mexc.js";
-import { monitorTick, alertOnce } from "./monitor.js";
+import { prices, lastPrice, deepHistory } from "./data/mexc.js";
+import { monitorTick, alertOnce, rAt } from "./monitor.js";
 import { candles, mapLimit } from "./candles.js";
 import { atr } from "./indicators.js";
 import { num } from "./runtime.js";
@@ -417,14 +417,19 @@ async function onDaily(day) {
 
 async function onMonthly(m) {
   await broadcast(monthReport(m));
-  const csv = exportMonthCsv(m);
-  const lg = exportMonthLog(m);
-  if (csv.count) {
-    await broadcastDoc(csv.path,
-      `<b>${m}</b> — ${csv.count} сделок. Колонки как в базе Golden, можно подклеивать.`);
-    await broadcastDoc(lg.path, `Полная лента событий за ${m}: ${lg.count} записей.`);
-  }
-  log(`месячный итог ${m}: ${csv.count} сделок`);
+  // После первого сообщения бросать нельзя: планировщик ставит отметку
+  // «отправлено» после onMonthly, и ошибка здесь заставила бы слать
+  // итог заново каждую минуту. Файлы — довесок, без них не страшно.
+  try {
+    const csv = exportMonthCsv(m);
+    const lg = exportMonthLog(m);
+    if (csv.count) {
+      await broadcastDoc(csv.path,
+        `<b>${m}</b> — ${csv.count} сделок. Колонки как в базе Golden, можно подклеивать.`);
+      await broadcastDoc(lg.path, `Полная лента событий за ${m}: ${lg.count} записей.`);
+    }
+    log(`месячный итог ${m}: ${csv.count} сделок`);
+  } catch (e) { log("выгрузки месяца не собрались:", e.message); }
 }
 
 // --- запуск -----------------------------------------------------------------
