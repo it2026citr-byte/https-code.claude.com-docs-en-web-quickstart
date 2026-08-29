@@ -9,14 +9,14 @@ import { num } from "./runtime.js";
 import { symbols as watchSymbols, paramsFor } from "./watchlist.js";
 import { refresh as refreshFunding } from "./data/funding.js";
 import { rejectReason, ready as tradableReady } from "./data/tradable.js";
-import { refreshMarket, rejectSignal, rejectMicro } from "./gate.js";
+import { refreshMarket, rejectSignal, rejectMicro, sonarSnapshot } from "./gate.js";
 import { detect as detectFigures, figuresLine, strongFor } from "./patterns.js";
 
 /** Ограничитель параллельности — чтобы не долбить биржу и не греть телефон. */
 const insertSignal = db.prepare(
   "INSERT OR IGNORE INTO signals" +
-  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol,agree,shares) " +
-  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?,?,?)"
+  "(strategy,symbol,side,tf,entry,sl,targets,reason,created_at,bar_time,status,vol,agree,shares,sonar) " +
+  "VALUES(?,?,?,?,?,?,?,?,?,?,'new',?,?,?,?)"
 );
 
 /**
@@ -251,7 +251,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
       JSON.stringify(f.targets), f.reason, now(), f.barTime,
       f.vol ? JSON.stringify(f.vol) : null,
       f.agree ? JSON.stringify(f.agree) : null,
-      f.shares ? JSON.stringify(f.shares) : null);
+      f.shares ? JSON.stringify(f.shares) : null,
+      JSON.stringify(await sonarSnapshot(f.symbol, f.side)));
     if (!r.changes) continue;                       // уже был такой — не дублируем
     const id = Number(r.lastInsertRowid);
     logEvent({ kind: "signal", strategy: f.strategy, symbol: f.symbol,

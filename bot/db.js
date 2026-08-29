@@ -128,6 +128,8 @@ try {
   if (!cols.includes("agree")) db.exec("ALTER TABLE signals ADD COLUMN agree TEXT");
   // Доли фиксации по целям, JSON. Пусто — классические 20% на каждой.
   if (!cols.includes("shares")) db.exec("ALTER TABLE signals ADD COLUMN shares TEXT");
+  // Минутный сонар на момент сигнала, JSON. Копится для отладки условий.
+  if (!cols.includes("sonar")) db.exec("ALTER TABLE signals ADD COLUMN sonar TEXT");
 }
 
 {
