@@ -354,7 +354,35 @@ export async function postUpdate(positionId, text, keyboard = null) {
 }
 
 // --- отчёты -----------------------------------------------------------------
+/**
+ * Напоминание, поставленное 30 августа: у Zone-Retest есть намёк на
+ * встроенное условие «входить только на ноже» (финал 15 минут против
+ * сделки). Счёт наблюдения 2:0 в его пользу (+0,116R на 37 сигналах
+ * бэктеста, +0,323R на 5 сигналах живой недели), но 42 сделок мало.
+ * Порог пересчёта — 300 сигналов стратегии; бот сам скажет, когда
+ * накопится. Подробности — СТРАТЕГИИ.md, раздел 5ж.
+ */
+async function knifeReminder() {
+  if (getSetting("knife_done", "0") === "1") return;
+  const startRaw = getSetting("knife_start", "");
+  if (!startRaw) { setSetting("knife_start", String(now())); return; }
+  const n = db.prepare(
+    "SELECT COUNT(*) AS n FROM signals WHERE strategy LIKE '%Zone-Retest%' AND created_at >= ?"
+  ).get(Number(startRaw)).n;
+  if (n < 300) return;
+  setSetting("knife_done", "1");
+  await broadcast(
+    `🔪 <b>Пора пересчитать «только нож»</b>\n\n` +
+    `Накопилось ${n} сигналов Zone-Retest с 15-минутками — порог из ` +
+    `СТРАТЕГИИ.md (раздел 5ж) достигнут.\n\n` +
+    `Напомни в чате Claude: «пересчитай условие только нож для ` +
+    `Zone-Retest». Если счёт наблюдения останется в его пользу — ` +
+    `условие станет встроенным, как контртренд-фильтр.`);
+  log(`напоминание про «только нож» отправлено: ${n} сигналов`);
+}
+
 async function onDaily(day) {
+  await knifeReminder().catch(e => log("напоминание не проверилось:", e.message));
   const rows = closedBetween(startOfDayUtc(now()), now());
   if (!rows.length) return;                 // молчим, когда закрывать было нечего
   await broadcast(digest(rows, `Итоги дня ${day}`));
