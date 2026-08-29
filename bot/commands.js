@@ -200,12 +200,12 @@ export async function onMessage(msg) {
       setMode(MODE_FOCUS);
       const n = openPositions().length;
       await send(chatId,
-        `🎯 <b>Фокус включён.</b>\n\nПоиск новых монет остановлен. Все силы на ${n} ${n === 1 ? "сделку" : "сделки"} — проверка каждые ${cfg.focusIntervalSec} секунд вместо ${cfg.scanIntervalMin} минут.\n\n<i>Вернуться: /scan</i>`);
+        `🎯 <b>Фокус включён.</b>\n\nПоиск новых монет остановлен. Все силы на ${n} ${n === 1 ? "сделку" : "сделки"} — проверка каждые ${num("focus_sec")} секунд вместо ${num("watch_min")} минут.\n\n<i>Вернуться: /scan</i>`);
       break;
     }
     case "/scan": case "/скан":
       setMode(MODE_SCAN);
-      await send(chatId, `🔍 <b>Скан включён.</b>\n\nСнова ищу точки входа по всему рынку. Взятые сделки по-прежнему под присмотром, но проверяются раз в ${cfg.normalWatchMin} минут.`);
+      await send(chatId, `🔍 <b>Скан включён.</b>\n\nИщу точки входа по всему рынку каждые ${num("scan_min")} минут. Взятые сделки под присмотром раз в ${num("watch_min")} минут — это настройка «Присмотр вне фокуса».`);
       break;
 
     case "/pulse": case "/пульс": {
