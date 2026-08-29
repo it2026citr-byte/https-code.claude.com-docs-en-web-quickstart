@@ -152,6 +152,8 @@ export function signalCard(s) {
     `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)` +
       (when ? ` · ⏱ ${when}` : ""),
     `Цели ${s.targets.map(fmtPrice).join(" · ")}`,
+    s.pullPct ? `⏳ Вход лимиткой ${s.side === "long" ? "ниже" : "выше"} рынка на ` +
+      `${s.pullPct.toFixed(2)}% — ставь заявку и жди; может не исполниться` : null,
     s.figuresText ? `Фигура: ${s.figuresText}` : null,
     s.reason ? `<i>${s.reason}</i>` : null,
   ].filter(Boolean).join("\n") + agreeBlock(s.agree);

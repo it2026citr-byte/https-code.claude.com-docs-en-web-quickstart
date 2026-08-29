@@ -210,8 +210,28 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
         (gateOut.length > 2 ? " и др." : ""));
 
   let sent = 0, updated = 0;
+  const pullShare = num("entry_pull") / 100;
   for (let f of passed) {
     if (anchor) f = anchorGeometry(f);
+
+    // Откат входа: вся геометрия (вход, стоп, цели) сдвигается на долю
+    // среднедневного хода — лимитка ниже рынка для лонга, выше для
+    // шорта. Сдвигается целиком, а не только вход: иначе поменялся бы
+    // размер R. Замер честно против: не исполняются лучшие сигналы
+    // (+0.418R у упущенных), R/нед 1.09 → 0.80 — включено по прямому
+    // решению владельца, выключается настройкой «Откат входа».
+    f.vol = await volatility(f.symbol);
+    const day = f.vol?.w ?? f.vol?.q ?? f.vol?.y;
+    if (pullShare > 0 && day > 0) {
+      const delta = f.entry * pullShare * (day / 100);
+      const sgn = f.side === "long" ? -1 : 1;
+      f.marketPx = f.entry;
+      f.entry += sgn * delta;
+      f.sl += sgn * delta;
+      f.targets = f.targets.map(t => t + sgn * delta);
+      f.pullPct = pullShare * day;
+    }
+
     f.figuresText = figuresLine(f.figures, f.side);
     // Снайперская пометка живёт на сигнале, а не в отборе: в положении
     // «вместе с основными» ничего не режется, но жирный сигнал видно.
@@ -222,15 +242,13 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
       continue;
     }
     if (cfg.maxSignalsPerScan && sent >= cfg.maxSignalsPerScan) break;
-    const vol = await volatility(f.symbol);
     const r = insertSignal.run(f.strategy, f.symbol, f.side, f.tf, f.entry, f.sl,
       JSON.stringify(f.targets), f.reason, now(), f.barTime,
-      vol ? JSON.stringify(vol) : null,
+      f.vol ? JSON.stringify(f.vol) : null,
       f.agree ? JSON.stringify(f.agree) : null,
       f.shares ? JSON.stringify(f.shares) : null);
     if (!r.changes) continue;                       // уже был такой — не дублируем
     const id = Number(r.lastInsertRowid);
-    f.vol = vol;
     logEvent({ kind: "signal", strategy: f.strategy, symbol: f.symbol,
                side: f.side, price: f.entry, text: f.reason });
     await onSignal({ id, ...f });
