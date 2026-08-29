@@ -27,14 +27,14 @@ export const esc = (s) => String(s)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /**
- * Ошибки, после которых повтор безопасен: обрыв соединения, лимит
- * запросов (429 = «не принял») и шлюз, не передавший запрос к API, —
- * только 502/503, у них запрос гарантированно не принят. Таймаут,
- * «не JSON (HTTP 200)» и 504 сознательно НЕ повторяются: там
- * сообщение могло дойти, а не дочитался только ответ — повтор дал
- * бы дубль.
+ * Повторяем только ЗАВЕДОМО непринятое: обрыв соединения, 429
+ * («не принял, подожди») и 503 («сервис недоступен»). Всё
+ * двусмысленное — таймаут, 502, 504, «не JSON (HTTP 200)» — не
+ * повторяется: сообщение могло дойти, повтор дал бы дубль. Дубль
+ * хуже потери: потерянную тревогу дошлёт страховка монитора, а
+ * задвоенное сообщение неотличимо от задвоившегося бота.
  */
-const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Service Unavailable|не JSON \(HTTP 50[23]\)/i;
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Service Unavailable|не JSON \(HTTP 503\)/i;
 
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
@@ -63,12 +63,10 @@ export async function send(chatId, text, keyboard = null, replyTo = null) {
         catch (e2) { e = e2; }
       }
     }
-    // Карточку могли удалить — тогда шлём обычным сообщением, а не
-    // теряем событие. Сюда же падает неудачный повтор с ниткой.
-    if (replyTo) {
-      log("ответ на", replyTo, "не прошёл, шлю отдельно:", e.message);
-      return send(chatId, text, keyboard, null);
-    }
+    // Запасного пути «шлю без нитки» больше нет: удалённую карточку
+    // покрывает allow_sending_without_reply (Telegram шлёт без ответа
+    // сам, без ошибки), а значит сюда падают только настоящие отказы —
+    // и слепой повтор без нитки давал бы дубль при двусмысленных.
     log("не отправилось в", chatId, "—", e.message);
     return null;
   }
@@ -169,8 +167,9 @@ async function apiUpload(method, field, blob, filename, { chat_id, caption }) {
  */
 // Шаблоны только ЦЕЛЫМИ фразами из ответов Telegram: короткие
 // подстроки уже дважды ловили чужое («photo» есть в каждом сообщении,
-// «http» — в «не JSON (HTTP …)»).
-const URL_FETCH_FAIL = /HTTP URL|web ?page|wrong file identifier/i;
+// «http» — в «не JSON (HTTP …)»). «file identifier» покрывает и
+// «wrong file identifier», и «wrong remote file identifier».
+const URL_FETCH_FAIL = /HTTP URL|web ?page|file identifier/i;
 
 export async function sendPhoto(chatId, url, caption = "") {
   try {
