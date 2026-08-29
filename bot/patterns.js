@@ -145,12 +145,28 @@ export function detect(c, i) {
   return out;
 }
 
+/**
+ * Сильные фигуры — те, что на замере дали заметно больший средний R,
+ * когда смотрели в сторону входа: перевёрнутые голова и плечи +0.317,
+ * голова и плечи +0.180, пробой диапазона вниз +0.179, восходящий
+ * треугольник +0.135 — против +0.092…+0.130 у остальных. На них стоит
+ * снайперский режим отбора: ~3 сигнала в неделю вместо ~12.
+ */
+const STRONG = /голова и плечи|пробой диапазона вниз|восходящий треугольник/;
+export const isStrong = (f) => STRONG.test(f.name);
+
+/** Есть ли сильная фигура в сторону входа. */
+export const strongFor = (figs, side) => {
+  const want = side === "long" ? 1 : -1;
+  return Array.isArray(figs) && figs.some(f => f.dir === want && isStrong(f));
+};
+
 /** Строка для карточки: фигуры и их отношение к стороне входа. */
 export function figuresLine(figs, side) {
   if (!figs?.length) return null;
   const want = side === "long" ? 1 : -1;
-  const mark = (f) => f.dir === 0 ? `${f.name} · без стороны`
-    : f.dir === want ? `${f.name} — за вход` : `${f.name} — ПРОТИВ входа`;
+  const mark = (f) => (isStrong(f) ? "★ " : "") + (f.dir === 0 ? `${f.name} · без стороны`
+    : f.dir === want ? `${f.name} — за вход` : `${f.name} — ПРОТИВ входа`);
   return figs.map(mark).join("; ");
 }
 

@@ -111,7 +111,8 @@ async function onWatching(list) {
     if (openNow) continue;                       // по этой монете уже стоим
     await broadcast(
       `👀 <b>Взял на прицел</b> · ${esc(w.strategy)}\n` +
-      `<b>${esc(w.symbol)}</b> · ${fmtPrice(w.price)}\n` +
+      `<b>${esc(w.symbol)}</b> · сейчас ${fmtPrice(w.price)} · ` +
+      `${new Date((w.barTime + num("tz") * 3600) * 1000).toISOString().slice(11, 16)} (UTC+${num("tz")})\n` +
       `Ставка финансирования <b>${w.rate.toFixed(3)}%</b> — рынок доплачивает ` +
       `за лонги, это признак живого импульса.\n` +
       `Жду подтверждения: цена должна пробить <b>${fmtPrice(w.need)}</b> ` +

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { db, now } from "./db.js";
 import { ROOT } from "./config.js";
 import { fmtPrice } from "./format.js";
+import { num } from "./runtime.js";
 
 const DIR = join(ROOT, "storage", "journal");
 mkdirSync(DIR, { recursive: true });
@@ -131,16 +132,27 @@ function agreeBlock(raw) {
   return `\n\n<b>Согласие стратегий</b>\n${rows.join("\n")}`;
 }
 
+/** Время бара сигнала в поясе владельца: «14:00 28.08 (UTC+3)». */
+function signalTime(s) {
+  const t = s.barTime ?? s.bar_time;
+  if (!t) return null;
+  const tz = num("tz");
+  const d = new Date((t + tz * 3600) * 1000).toISOString();
+  return `${d.slice(11, 16)} ${d.slice(8, 10)}.${d.slice(5, 7)} (UTC+${tz})`;
+}
+
 export function signalCard(s) {
   const long = s.side === "long";
   const pct = Math.abs(s.sl - s.entry) / s.entry * 100;
+  const when = signalTime(s);
   return [
     `${long ? "📈" : "📉"} <b>${long ? "LONG" : "SHORT"}</b> ${s.symbol}` +
       volBlock(s.vol) + `  <i>${s.strategy} · ${TF_RU[s.tf] ?? s.tf}</i>`,
-    `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)`,
+    `Вход <b>${fmtPrice(s.entry)}</b> · Стоп <b>${fmtPrice(s.sl)}</b> (${pct.toFixed(2)}%)` +
+      (when ? ` · ⏱ ${when}` : ""),
     `Цели ${s.targets.map(fmtPrice).join(" · ")}`,
     s.figuresText ? `Фигура: ${s.figuresText}` : null,
-    `<i>${s.reason}</i>`,
+    s.reason ? `<i>${s.reason}</i>` : null,
   ].filter(Boolean).join("\n") + agreeBlock(s.agree);
 }
 
