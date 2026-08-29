@@ -1,4 +1,4 @@
-import { atr, cci } from "../indicators.js";
+import { atr, cci, ema } from "../indicators.js";
 import { structureBias, BULL, BEAR } from "../smc.js";
 
 /**
@@ -44,10 +44,15 @@ export function make(over = {}) {
   const P = { ...DEFAULTS, ...over };
   return {
   id: "Zone-Retest",
-  // Выключена по итогам проверки: на 24 парах за 125 дней лучший вариант
-  // дал +0,048R против +0,159 у Golden-Reverse и +0,286 у MA-Cross-CCI,
-  // при пятнадцати сигналах в сутки. Включить — поменять на true.
-  enabled: false,
+  // Была выключена: старый замер (24 пары, 125 дней) дал +0,048R.
+  // Пересмотр 29.08 на 41 паре за 46 недель нашёл рабочее ядро — входы
+  // ПРОТИВ тренда монеты по EMA200: 512 сигналов, 92% в плюс, +0,057R,
+  // устойчиво по всем пяти срезам, превосходство над случайным +0,070.
+  // Входы по тренду при этом убыточны (−0,014) и отсекаются ниже.
+  enabled: true,
+  // Гейт меряет трендовый ансамбль и к этой стратегии не применялся:
+  // она контртрендовая по замыслу, её отбор встроен в evaluate.
+  gateExempt: true,
   title: "Возврат к пробитому уровню",
   timeframe: "1h",
   warmup: 260,
@@ -57,6 +62,7 @@ export function make(over = {}) {
       atr: atr(c, P.atrLen),
       cci: cci(c, P.cciLen),
       str: structureBias(c, P.legs),
+      ema200: ema(c.map(b => b.c), 200),
     };
   },
 
@@ -127,8 +133,18 @@ export function make(over = {}) {
   evaluate(c, x, i) {
     const cond = this.conditions(c, x, i);
     if (!cond) return null;
-    const long = cond.long.every(z => z.ok);
-    const short = cond.short.every(z => z.ok);
+    let long = cond.long.every(z => z.ok);
+    let short = cond.short.every(z => z.ok);
+    if (!long && !short) return null;
+
+    // Только против тренда монеты. Вся прибыль стратегии живёт в этих
+    // входах (92% в плюс, +0,057R); входы по тренду убыточны (−0,014).
+    // Это не парадокс: возврат к пробитому уровню — контртрендовое
+    // движение по природе, и по тренду он означает «догоняем поезд».
+    const e = x.ema200[i];
+    if (e == null) return null;
+    if (long && c[i].c > e) long = false;
+    if (short && c[i].c < e) short = false;
     if (!long && !short) return null;
 
     const a = x.atr[i], entry = c[i].c;

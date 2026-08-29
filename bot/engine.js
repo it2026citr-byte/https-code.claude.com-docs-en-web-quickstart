@@ -134,7 +134,8 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
         const cc = s.conditions ? s.conditions(c, x, i) : null;
         if (cc) cond.push({ id: s.id, cc });
         const sig = s.evaluate(c, x, i);
-        if (sig) fired.push({ ...sig, strategy: s.id, tf, barTime: c[i].t, tuned: Boolean(own) });
+        if (sig) fired.push({ ...sig, strategy: s.id, tf, barTime: c[i].t,
+                              tuned: Boolean(own), gateExempt: Boolean(s.gateExempt) });
         // Первый этап без второго — монета на прицеле, но входа ещё нет.
         else if (s.watching) {
           const w = s.watching(c, x, i);
@@ -172,6 +173,9 @@ export async function scanMarket(strategies, onSignal, onUpdate) {
 
       found.push({
         ...best,
+        // Слитый сигнал минует гейт, только если ВСЕ сошедшиеся стратегии
+        // от него освобождены: обычной строгости не убавляем.
+        gateExempt: same.every(x => x.gateExempt),
         figures,
         gateCandles: lastCandles,
         gateIndex: lastIndex,
