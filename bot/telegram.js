@@ -103,15 +103,37 @@ export async function editLong(chatId, msgId, text, keyboard = null) {
 }
 
 /**
- * Картинка по ссылке: Telegram скачивает её сам, нам качать не нужно.
- * Если ссылка почему-то не берётся, отправляем подпись текстом —
- * потерять разбор хуже, чем показать его без картинки.
+ * Картинка по ссылке — в три попытки, от дешёвой к дорогой.
+ *
+ * Сначала отдаём Telegram саму ссылку: его серверы качают картинку
+ * сами, нам трафика не нужно. Но у Telegram это периодически
+ * срывается даже на живых ссылках (проверено на CDN предпросмотра
+ * t.me: картинка отдаётся, а sendPhoto по URL отказывает). Поэтому
+ * при отказе качаем байты сами и грузим их файлом. Подпись текстом —
+ * только когда не вышло и это: потерять разбор хуже, чем показать
+ * его без картинки.
  */
 export async function sendPhoto(chatId, url, caption = "") {
   try {
     return await api("sendPhoto", {
       chat_id: chatId, photo: url, caption, parse_mode: "HTML",
     });
+  } catch (e) {
+    log("картинка по ссылке не ушла, качаю сам:", e.message);
+  }
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`HTTP ${r.status} при скачивании`);
+    const buf = Buffer.from(await r.arrayBuffer());
+    log(`картинку скачал сам: ${buf.length} байт`);
+    const fd = new FormData();
+    fd.append("chat_id", String(chatId));
+    if (caption) { fd.append("caption", caption); fd.append("parse_mode", "HTML"); }
+    fd.append("photo", new Blob([buf]), "chart.jpg");
+    const res = await fetch(`${API}/sendPhoto`, { method: "POST", body: fd });
+    const j = await res.json();
+    if (!j.ok) throw new Error(j.description);
+    return j.result;
   } catch (e) {
     log("картинка не отправилась:", e.message);
     return send(chatId, caption + `\n<i>(картинка не загрузилась)</i>`);
