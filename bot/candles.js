@@ -80,12 +80,18 @@ export async function candles(symbol, tf, limit = 300) {
   const FULL = Math.max(limit, 300);
   // short: биржа отдала всё, что у неё есть, — монета моложе limit.
   // Без пометки короткий ряд вечно проваливал бы проверку «кеш мал»
-  // и перекачивался бы целиком на каждом вызове.
-  if (!hit || (hit.arr.length < limit * 0.8 && !hit.short)) {
+  // и перекачивался бы целиком на каждом вызове. Пометка отвисает
+  // через KEEP_MS: если короткий ответ был случайным обрезком, а не
+  // молодостью монеты, полная перекачка это выяснит и вылечит.
+  const shortStale = hit?.short && Date.now() - (hit.shortAt ?? 0) > KEEP_MS;
+  if (!hit || (hit.arr.length < limit * 0.8 && (!hit.short || shortStale))) {
     const arr = await fetchKlines(symbol, tf, FULL);
-    cache.set(key, { arr, at: Date.now(), short: arr.length < FULL });
+    if (!arr.length) return hit ? hit.arr.slice(-limit) : [];  // пусто не кешируем
+    cache.set(key, { arr, at: Date.now(),
+                     short: arr.length < FULL, shortAt: Date.now() });
     return arr.slice(-limit);
   }
+  if (!hit.arr.length) { cache.delete(key); return []; }       // защита от старых пустых
   hit.at = Date.now();
 
   // Сколько баров могло закрыться с последнего обновления: хвост обязан
@@ -95,7 +101,9 @@ export async function candles(symbol, tf, limit = 300) {
   // Перерыв длиннее лимита латанием не закрыть — только перекачать.
   if (ageBars + 2 >= FULL) {
     const arr = await fetchKlines(symbol, tf, FULL);
-    cache.set(key, { arr, at: Date.now() });
+    if (!arr.length) return hit.arr.slice(-limit);
+    cache.set(key, { arr, at: Date.now(),
+                     short: arr.length < FULL, shortAt: Date.now() });
     return arr.slice(-limit);
   }
   const need = Math.max(TAIL, ageBars + 2);

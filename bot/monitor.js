@@ -24,7 +24,8 @@ const once = (posId, level, reason, text) =>
 const stash = db.prepare(
   "UPDATE alerts SET msg=?, kb=?, sent=0 WHERE position_id=? AND level=? AND reason=?");
 const pickUnsent = db.prepare(
-  "SELECT * FROM alerts WHERE sent=0 AND tries<10 ORDER BY id LIMIT 3");
+  "SELECT * FROM alerts WHERE sent=0 AND tries<10 AND level!='yellow' " +
+  "ORDER BY id LIMIT 3");
 const markSent = db.prepare("UPDATE alerts SET sent=1 WHERE id=?");
 const markTried = db.prepare("UPDATE alerts SET tries=tries+1 WHERE id=?");
 
@@ -94,12 +95,19 @@ export function rAt(p, price) {
   return banked(p, p.tp_hit) + left * move;
 }
 
+/**
+ * Закрытие атомарно: WHERE status='open' пропускает только один такт.
+ * Параллельный (сорванный по дедлайну, но доживший) получает null и
+ * не пишет второй раз ни в журнал, ни пользователю. null — «уже
+ * закрыта не мной», проверяй у всех, кто зовёт.
+ */
 export function closePosition(p, price, reason) {
   const r = rAt(p, price);
-  db.prepare(
+  const res = db.prepare(
     "UPDATE positions SET status='closed', closed_at=?, close_price=?, " +
-    "close_reason=?, r_result=? WHERE id=?"
+    "close_reason=?, r_result=? WHERE id=? AND status='open'"
   ).run(now(), price, reason, r, p.id);
+  if (!res.changes) return null;
   logEvent({ kind: reason === "stop" ? "stop" : "closed", strategy: p.strategy,
              symbol: p.symbol, side: p.side, price, r, text: reason });
   return r;
@@ -193,7 +201,7 @@ export async function monitorTick({ strategies, notify, focus }) {
 
       if (hit >= targets.length) {
         const r = closePosition(p, targets[targets.length - 1], "target");
-        if (once(p.id, "info", "закрыта", ""))
+        if (r != null && once(p.id, "info", "закрыта", ""))
           await notifyOnce(notify, p.id, "info", "закрыта",
           `🟢 <b>Закрыта по последней цели</b>\n` +
           `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
@@ -207,7 +215,7 @@ export async function monitorTick({ strategies, notify, focus }) {
     if (long ? price <= sl : price >= sl) {
       const be = p.tp_hit > 0 || p.be_armed === 1;
       const r = closePosition(p, sl, "stop");
-      if (once(p.id, "info", "закрыта", ""))
+      if (r != null && once(p.id, "info", "закрыта", ""))
         await notifyOnce(notify, p.id, "info", "закрыта",
         `${be ? "⚪️" : "🔴"} <b>${be ? "Стоп в безубытке" : "Стоп"}</b> · ${fmtPrice(sl)}\n` +
         `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +

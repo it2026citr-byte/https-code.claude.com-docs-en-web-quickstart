@@ -24,12 +24,12 @@ export const esc = (s) => String(s)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /**
- * Ошибки, после которых повтор безопасен и полезен: обрыв соединения
- * (запрос не дошёл), лимит запросов (Telegram просит подождать) и
- * ответы шлюза 5xx («не JSON» — это они). Таймаута здесь нет
- * сознательно: при нём сообщение могло дойти, повтор дал бы дубль.
+ * Ошибки, после которых повтор безопасен: обрыв соединения (запрос не
+ * дошёл) и лимит запросов (429 означает «не принял»). Таймаута и
+ * «не JSON» здесь нет сознательно: и там и там сообщение могло дойти —
+ * ответ просто не дочитался, — и повтор дал бы дубль.
  */
-const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Internal Server|не JSON/i;
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests/i;
 
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
@@ -57,8 +57,14 @@ export async function send(chatId, text, keyboard = null, replyTo = null) {
       log("не отправилось в", chatId, "—", e.message);
       return null;
     }
-    log("сеть оборвалась, повторю через 2 с:", e.message);
-    await new Promise(r => setTimeout(r, 2000));
+    // 429 называет срок сам («retry after N»). Дольше пяти секунд не
+    // ждём — опрос команд строго последовательный, остальное дошлёт
+    // страховка монитора.
+    const after = Number(/retry after (\d+)/i.exec(e.message)?.[1] ?? 0);
+    if (after > 5) { log("не отправилось в", chatId, "—", e.message); return null; }
+    const waitMs = after > 0 ? after * 1000 : 2000;
+    log(`сбой отправки, повторю через ${waitMs / 1000} с:`, e.message);
+    await new Promise(r => setTimeout(r, waitMs));
     try { return await api("sendMessage", payload); }
     catch (e2) { log("не отправилось в", chatId, "—", e2.message); return null; }
   }

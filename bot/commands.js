@@ -757,6 +757,7 @@ export async function onCallback(q) {
       const px = await lastPrice(p.symbol).catch(() => null);
       if (px == null) { await answerCallback(q.id, "Цена недоступна, попробуй ещё раз"); return; }
       const r = closePosition(p, px, "manual");
+      if (r == null) { await answerCallback(q.id, "Сделка уже закрыта"); return; }
       await answerCallback(q.id, `Закрыто ${rTxt(r)}`);
       await editText(chatId, q.message.message_id,
         `🚪 <b>Закрыто вручную</b> · ${esc(p.symbol)} ${long ? "LONG" : "SHORT"}\n` +
@@ -854,6 +855,7 @@ export async function onCallback(q) {
     try { px = await lastPrice(p.symbol); }
     catch { await answerCallback(q.id, "Цена не пришла, попробуй ещё раз"); return; }
     const r = closePosition(p, px, "broken");
+    if (r == null) { await answerCallback(q.id, "Сделка уже закрыта"); return; }
     await answerCallback(q.id, "Закрыл");
     await postUpdate(pid,
       `🟠 <b>Сделка закрыта по слому стратегии</b>\n` +
