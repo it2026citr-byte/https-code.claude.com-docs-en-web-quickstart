@@ -74,10 +74,14 @@ export async function candles(symbol, tf, limit = 300) {
   const key = `${symbol}|${tf}`;
   const hit = cache.get(key);
 
+  // Качаем всегда полную историю, даже если просили 30 баров: кеш
+  // общий, и короткая загрузка одного звонящего заставила бы соседа
+  // перекачивать всё заново.
+  const FULL = Math.max(limit, 300);
   if (!hit || hit.arr.length < limit * 0.8) {
-    const arr = await fetchKlines(symbol, tf, limit);
+    const arr = await fetchKlines(symbol, tf, FULL);
     cache.set(key, { arr, at: Date.now() });
-    return arr.slice();
+    return arr.slice(-limit);
   }
   hit.at = Date.now();
 
@@ -86,10 +90,10 @@ export async function candles(symbol, tf, limit = 300) {
   const stepMs = (TF_SEC[tf] ?? 3600) * 1000;
   const ageBars = Math.ceil((Date.now() - hit.arr.at(-1).t * 1000) / stepMs);
   // Перерыв длиннее лимита латанием не закрыть — только перекачать.
-  if (ageBars + 2 >= limit) {
-    const arr = await fetchKlines(symbol, tf, limit);
+  if (ageBars + 2 >= FULL) {
+    const arr = await fetchKlines(symbol, tf, FULL);
     cache.set(key, { arr, at: Date.now() });
-    return arr.slice();
+    return arr.slice(-limit);
   }
   const need = Math.max(TAIL, ageBars + 2);
 

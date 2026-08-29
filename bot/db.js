@@ -133,6 +133,19 @@ try {
 }
 
 {
+  // Недоставленные тревоги. Гашение повторов пишется до отправки (иначе
+  // гонка), но состояние позиции к этому моменту уже закоммичено, и
+  // повторить сообщение по внешним признакам нельзя. Поэтому текст
+  // неотправленной тревоги хранится в её же строке: sent=0 — досылается
+  // следующим тактом присмотра, tries считает попытки.
+  const cols = db.prepare("PRAGMA table_info(alerts)").all().map(r => r.name);
+  if (!cols.includes("msg")) db.exec("ALTER TABLE alerts ADD COLUMN msg TEXT");
+  if (!cols.includes("kb")) db.exec("ALTER TABLE alerts ADD COLUMN kb TEXT");
+  if (!cols.includes("sent")) db.exec("ALTER TABLE alerts ADD COLUMN sent INTEGER DEFAULT 1");
+  if (!cols.includes("tries")) db.exec("ALTER TABLE alerts ADD COLUMN tries INTEGER DEFAULT 0");
+}
+
+{
   const cols = db.prepare("PRAGMA table_info(positions)").all().map(r => r.name);
   // id карточки сигнала: вся история по сделке уходит ответами на неё,
   // чтобы в чате получалась нитка, а не россыпь сообщений.

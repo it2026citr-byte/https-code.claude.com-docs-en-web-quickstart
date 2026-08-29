@@ -48,11 +48,16 @@ export function acquireLock() {
       // копии навсегда. Правильный выход у проснувшейся один: умереть.
       const beat = setInterval(() => {
         try {
+          const t0 = Date.now();
           const cur = read();
           if (cur && cur.pid !== process.pid && alive(cur.pid)) {
             log(`замок перехвачен копией PID ${cur.pid} — эта копия лишняя, выхожу`);
             process.exit(0);                     // сторож не поднимет вторую: замок занят
           }
+          // Заморозило между чтением и записью? Пишем вслепую поверх
+          // возможно чужого замка — лучше пропустить удар: следующий
+          // честно перечитает и, если замок занят, выйдет.
+          if (Date.now() - t0 > 5_000) return;
           writeFileSync(LOCK, stamp());
         } catch { /* переживём */ }
       }, BEAT_MS);

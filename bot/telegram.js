@@ -23,6 +23,9 @@ export async function api(method, payload = {}) {
 export const esc = (s) => String(s)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
+/** Ошибки, при которых запрос заведомо не дошёл до Telegram. */
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE/i;
+
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
     chat_id: chatId,
@@ -40,11 +43,16 @@ export async function send(chatId, text, keyboard = null, replyTo = null) {
       log("ответ на", replyTo, "не прошёл, шлю отдельно:", e.message);
       return send(chatId, text, keyboard, null);
     }
-    // Один повтор через две секунды: сетевой чих не должен стоить
-    // сообщения. Постоянные отказы (блокировка, кривая разметка)
-    // повтор не вылечит — тогда честно сдаёмся и возвращаем null,
-    // по которому монитор откатит гашение тревоги.
-    log("не отправилось, повторю через 2 с:", e.message);
+    // Один повтор через две секунды — но только когда запрос ТОЧНО не
+    // дошёл (обрыв соединения). Таймаут повторять нельзя: сообщение
+    // могло дойти, а ответ — нет, и повтор дал бы дубль. Постоянные
+    // отказы (блокировка, кривая разметка) повтор не вылечит — по ним
+    // сразу null, монитор дошлёт через свою страховку.
+    if (!RETRY_NET.test(e.message)) {
+      log("не отправилось в", chatId, "—", e.message);
+      return null;
+    }
+    log("сеть оборвалась, повторю через 2 с:", e.message);
     await new Promise(r => setTimeout(r, 2000));
     try { return await api("sendMessage", payload); }
     catch (e2) { log("не отправилось в", chatId, "—", e2.message); return null; }
