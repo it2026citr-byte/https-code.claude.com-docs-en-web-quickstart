@@ -24,12 +24,12 @@ export const esc = (s) => String(s)
   .replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
 
 /**
- * Ошибки, после которых повтор безопасен: обрыв соединения (запрос не
- * дошёл) и лимит запросов (429 означает «не принял»). Таймаута и
- * «не JSON» здесь нет сознательно: и там и там сообщение могло дойти —
- * ответ просто не дочитался, — и повтор дал бы дубль.
+ * Ошибки, после которых повтор безопасен: обрыв соединения, лимит
+ * запросов (429 = «не принял»), шлюз не достучался до API (502/503).
+ * Таймаута и «не JSON» здесь нет сознательно: и там и там сообщение
+ * могло дойти — ответ просто не дочитался, — и повтор дал бы дубль.
  */
-const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests/i;
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Service Unavailable/i;
 
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
@@ -43,30 +43,29 @@ export async function send(chatId, text, keyboard = null, replyTo = null) {
   try {
     return await api("sendMessage", payload);
   } catch (e) {
-    // Карточку могли удалить — тогда шлём обычным сообщением, а не теряем событие.
+    // Один повтор — только когда запрос ТОЧНО не дошёл (обрыв, 429).
+    // Таймаут повторять нельзя: сообщение могло дойти, а ответ — нет,
+    // повтор дал бы дубль. Повтор идёт тем же payload — нитка ответа
+    // сохраняется; 429 называет срок сам («retry after N»), дольше
+    // пяти секунд не ждём: опрос команд строго последовательный.
+    if (RETRY_NET.test(e.message)) {
+      const after = Number(/retry after (\d+)/i.exec(e.message)?.[1] ?? 0);
+      if (after <= 5) {
+        const waitMs = after > 0 ? after * 1000 : 2000;
+        log(`сбой отправки, повторю через ${waitMs / 1000} с:`, e.message);
+        await new Promise(r => setTimeout(r, waitMs));
+        try { return await api("sendMessage", payload); }
+        catch (e2) { e = e2; }
+      }
+    }
+    // Карточку могли удалить — тогда шлём обычным сообщением, а не
+    // теряем событие. Сюда же падает неудачный повтор с ниткой.
     if (replyTo) {
       log("ответ на", replyTo, "не прошёл, шлю отдельно:", e.message);
       return send(chatId, text, keyboard, null);
     }
-    // Один повтор через две секунды — но только когда запрос ТОЧНО не
-    // дошёл (обрыв соединения). Таймаут повторять нельзя: сообщение
-    // могло дойти, а ответ — нет, и повтор дал бы дубль. Постоянные
-    // отказы (блокировка, кривая разметка) повтор не вылечит — по ним
-    // сразу null, монитор дошлёт через свою страховку.
-    if (!RETRY_NET.test(e.message)) {
-      log("не отправилось в", chatId, "—", e.message);
-      return null;
-    }
-    // 429 называет срок сам («retry after N»). Дольше пяти секунд не
-    // ждём — опрос команд строго последовательный, остальное дошлёт
-    // страховка монитора.
-    const after = Number(/retry after (\d+)/i.exec(e.message)?.[1] ?? 0);
-    if (after > 5) { log("не отправилось в", chatId, "—", e.message); return null; }
-    const waitMs = after > 0 ? after * 1000 : 2000;
-    log(`сбой отправки, повторю через ${waitMs / 1000} с:`, e.message);
-    await new Promise(r => setTimeout(r, waitMs));
-    try { return await api("sendMessage", payload); }
-    catch (e2) { log("не отправилось в", chatId, "—", e2.message); return null; }
+    log("не отправилось в", chatId, "—", e.message);
+    return null;
   }
 }
 

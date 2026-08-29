@@ -68,6 +68,42 @@ let sinceEvict = 0;
  *      оставалась дыра, а последняя свеча навсегда полуфабрикат.
  *      Теперь хвост считается от возраста кеша.
  */
+/**
+ * Полная перекачка — единственное место, где решается, что класть в
+ * кеш. Дублировать её по веткам нельзя: одна копия уже потеряла
+ * пометку short и вернула вечную перекачку молодых монет.
+ *
+ *   ошибка сети   есть кеш — служим кешем, нет — пробрасываем;
+ *   пустой ответ  есть кеш — служим кешем и НЕ трогаем его возраст
+ *                 (перестанут спрашивать — вытеснится сам, а пустота
+ *                 могла быть и сбоем); кеша нет — надгробие: пара
+ *                 мертва, переспрашиваем не чаще раза в DEAD_MS;
+ *   короткий ряд  пометка short: биржа отдала всё, что есть.
+ */
+const DEAD_MS = 10 * 60_000;
+async function refetchFull(key, hit, symbol, tf, FULL, limit) {
+  let arr;
+  try { arr = await fetchKlines(symbol, tf, FULL); }
+  catch (e) {
+    if (hit?.arr.length) {
+      log(`перекачка ${symbol} не удалась, служу кешем:`, e.message);
+      return hit.arr.slice(-limit);
+    }
+    throw e;
+  }
+  if (!arr.length) {
+    if (hit?.arr.length) {
+      log(`${symbol} ${tf}: биржа отдала пусто, пока служу кешем`);
+      return hit.arr.slice(-limit);
+    }
+    cache.set(key, { arr: [], at: Date.now(), dead: true });
+    return [];
+  }
+  cache.set(key, { arr, at: Date.now(),
+                   short: arr.length < FULL, shortAt: Date.now() });
+  return arr.slice(-limit);
+}
+
 export async function candles(symbol, tf, limit = 300) {
   if (++sinceEvict >= 500) { sinceEvict = 0; evict(); }
 
@@ -78,34 +114,32 @@ export async function candles(symbol, tf, limit = 300) {
   // общий, и короткая загрузка одного звонящего заставила бы соседа
   // перекачивать всё заново.
   const FULL = Math.max(limit, 300);
-  // short: биржа отдала всё, что у неё есть, — монета моложе limit.
-  // Без пометки короткий ряд вечно проваливал бы проверку «кеш мал»
-  // и перекачивался бы целиком на каждом вызове. Пометка отвисает
-  // через KEEP_MS: если короткий ответ был случайным обрезком, а не
-  // молодостью монеты, полная перекачка это выяснит и вылечит.
-  const shortStale = hit?.short && Date.now() - (hit.shortAt ?? 0) > KEEP_MS;
-  if (!hit || (hit.arr.length < limit * 0.8 && (!hit.short || shortStale))) {
-    const arr = await fetchKlines(symbol, tf, FULL);
-    if (!arr.length) return hit ? hit.arr.slice(-limit) : [];  // пусто не кешируем
-    cache.set(key, { arr, at: Date.now(),
-                     short: arr.length < FULL, shortAt: Date.now() });
-    return arr.slice(-limit);
+
+  // Мёртвая пара: свечей у биржи нет. Возраст надгробия не обновляем —
+  // не будут спрашивать, вытеснится; спрашивают — переспросим сами,
+  // но не чаще раза в DEAD_MS.
+  if (hit?.dead) {
+    if (Date.now() - hit.at < DEAD_MS) return [];
+    return refetchFull(key, hit, symbol, tf, FULL, limit);
   }
-  if (!hit.arr.length) { cache.delete(key); return []; }       // защита от старых пустых
-  hit.at = Date.now();
+
+  // short: биржа отдала всё, что у неё есть, — монета моложе limit.
+  // Без пометки короткий ряд вечно проваливал бы проверку «кеш мал».
+  // Пометка отвисает через KEEP_MS: случайный обрезок ответа не должен
+  // давить мониторинг днями — перекачка выяснит и вылечит.
+  const shortStale = hit?.short && Date.now() - (hit.shortAt ?? 0) > KEEP_MS;
+  if (!hit || (hit.arr.length < limit * 0.8 && (!hit.short || shortStale)))
+    return refetchFull(key, hit, symbol, tf, FULL, limit);
 
   // Сколько баров могло закрыться с последнего обновления: хвост обязан
   // накрыть перерыв целиком, с запасом на границу и формирующийся бар.
   const stepMs = (TF_SEC[tf] ?? 3600) * 1000;
   const ageBars = Math.ceil((Date.now() - hit.arr.at(-1).t * 1000) / stepMs);
   // Перерыв длиннее лимита латанием не закрыть — только перекачать.
-  if (ageBars + 2 >= FULL) {
-    const arr = await fetchKlines(symbol, tf, FULL);
-    if (!arr.length) return hit.arr.slice(-limit);
-    cache.set(key, { arr, at: Date.now(),
-                     short: arr.length < FULL, shortAt: Date.now() });
-    return arr.slice(-limit);
-  }
+  if (ageBars + 2 >= FULL)
+    return refetchFull(key, hit, symbol, tf, FULL, limit);
+
+  hit.at = Date.now();
   const need = Math.max(TAIL, ageBars + 2);
 
   let tail;

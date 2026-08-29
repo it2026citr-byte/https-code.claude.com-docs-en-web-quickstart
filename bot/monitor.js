@@ -215,12 +215,13 @@ export async function monitorTick({ strategies, notify, focus }) {
     if (long ? price <= sl : price >= sl) {
       const be = p.tp_hit > 0 || p.be_armed === 1;
       const r = closePosition(p, sl, "stop");
-      if (r != null && once(p.id, "info", "закрыта", ""))
+      if (r != null && once(p.id, "info", "закрыта", "")) {
+        events++;                       // событие считает только закрывший такт
         await notifyOnce(notify, p.id, "info", "закрыта",
-        `${be ? "⚪️" : "🔴"} <b>${be ? "Стоп в безубытке" : "Стоп"}</b> · ${fmtPrice(sl)}\n` +
-        `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
-        `<i>${goldenTime(now())}</i>`);
-      events++;
+          `${be ? "⚪️" : "🔴"} <b>${be ? "Стоп в безубытке" : "Стоп"}</b> · ${fmtPrice(sl)}\n` +
+          `${p.symbol} ${long ? "LONG" : "SHORT"} · итог <b>${rTxt(r)}</b>\n` +
+          `<i>${goldenTime(now())}</i>`);
+      }
       continue;
     }
 
