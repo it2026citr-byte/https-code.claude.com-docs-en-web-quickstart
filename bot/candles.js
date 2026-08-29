@@ -80,8 +80,12 @@ let sinceEvict = 0;
  *                 мертва, переспрашиваем не чаще раза в DEAD_MS;
  *   короткий ряд  пометка short: биржа отдала всё, что есть.
  */
-const DEAD_MS = 10 * 60_000;
-async function refetchFull(key, hit, symbol, tf, FULL, limit) {
+// Две минуты, не больше: пустой ответ бывает и сбоем, а по монете
+// может стоять открытая позиция — тянуть с красной тревогой нельзя.
+const DEAD_MS = 2 * 60_000;
+async function refetchFull(symbol, tf, FULL, limit) {
+  const key = `${symbol}|${tf}`;
+  const hit = cache.get(key);
   let arr;
   try { arr = await fetchKlines(symbol, tf, FULL); }
   catch (e) {
@@ -120,7 +124,7 @@ export async function candles(symbol, tf, limit = 300) {
   // но не чаще раза в DEAD_MS.
   if (hit?.dead) {
     if (Date.now() - hit.at < DEAD_MS) return [];
-    return refetchFull(key, hit, symbol, tf, FULL, limit);
+    return refetchFull(symbol, tf, FULL, limit);
   }
 
   // short: биржа отдала всё, что у неё есть, — монета моложе limit.
@@ -129,7 +133,7 @@ export async function candles(symbol, tf, limit = 300) {
   // давить мониторинг днями — перекачка выяснит и вылечит.
   const shortStale = hit?.short && Date.now() - (hit.shortAt ?? 0) > KEEP_MS;
   if (!hit || (hit.arr.length < limit * 0.8 && (!hit.short || shortStale)))
-    return refetchFull(key, hit, symbol, tf, FULL, limit);
+    return refetchFull(symbol, tf, FULL, limit);
 
   // Сколько баров могло закрыться с последнего обновления: хвост обязан
   // накрыть перерыв целиком, с запасом на границу и формирующийся бар.
@@ -137,7 +141,7 @@ export async function candles(symbol, tf, limit = 300) {
   const ageBars = Math.ceil((Date.now() - hit.arr.at(-1).t * 1000) / stepMs);
   // Перерыв длиннее лимита латанием не закрыть — только перекачать.
   if (ageBars + 2 >= FULL)
-    return refetchFull(key, hit, symbol, tf, FULL, limit);
+    return refetchFull(symbol, tf, FULL, limit);
 
   hit.at = Date.now();
   const need = Math.max(TAIL, ageBars + 2);

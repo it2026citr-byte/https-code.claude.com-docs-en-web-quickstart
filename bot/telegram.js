@@ -15,7 +15,10 @@ export async function api(method, payload = {}) {
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(tmoMs),
   });
-  const j = await res.json().catch(() => ({ ok: false, description: "не JSON" }));
+  // Код ответа сохраняем: «не JSON (HTTP 502)» — это шлюз, который до
+  // API не достучался, такой повторить безопасно; «не JSON (HTTP 200)»
+  // — возможно, усечённый удачный ответ, такой повторять нельзя.
+  const j = await res.json().catch(() => ({ ok: false, description: `не JSON (HTTP ${res.status})` }));
   if (!j.ok) throw new Error(`Telegram ${method}: ${j.description || res.status}`);
   return j.result;
 }
@@ -29,7 +32,7 @@ export const esc = (s) => String(s)
  * Таймаута и «не JSON» здесь нет сознательно: и там и там сообщение
  * могло дойти — ответ просто не дочитался, — и повтор дал бы дубль.
  */
-const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Service Unavailable/i;
+const RETRY_NET = /fetch failed|ECONN|EAI_AGAIN|socket|network|reset|EPIPE|Too Many Requests|Bad Gateway|Service Unavailable|не JSON \(HTTP 5\d\d\)/i;
 
 export async function send(chatId, text, keyboard = null, replyTo = null) {
   const payload = {
